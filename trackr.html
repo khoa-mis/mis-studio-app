@@ -737,7 +737,7 @@ function defaultData() {
     projectStatuses: {},  // key: "memberId::projectId::month" → 'done' | 'pending'
     emailjs: { publicKey: '', serviceId: '', templateId: '' },
     schedule: { enabled: false, days: [], recipients: [], lastSent: '' },
-    account: { workspaceName: 'mis.studio', googleClientId: '', allowedDomain: '' },
+    account: { workspaceName: 'mis.studio', googleClientId: '__GOOGLE_CLIENT_ID__', allowedDomain: '' },
     rolePermissions: {
       admin:        ['performance','projections','myhours','clients','team','settings','account','notifications','manage_rights','access_pay','access_grow','invoices'],
       team_manager: ['performance','projections','myhours','clients','team','account','notifications','access_pay','access_grow','invoices'],
@@ -802,7 +802,7 @@ function loadDB() {
     if (!DB.emailjs) DB.emailjs = { publicKey: '', serviceId: '', templateId: '' };
     if (!DB.schedule) DB.schedule = { enabled: false, days: [], recipients: [], lastSent: '' };
     if (!DB.settings.backupSchedule) DB.settings.backupSchedule = { enabled: false, frequency: 'weekly', dayOfWeek: 1, dayOfMonth: 1, emails: [], lastSent: '' };
-    if (!DB.account) DB.account = { workspaceName: 'mis.studio', googleClientId: '', allowedDomain: '' };
+    if (!DB.account) DB.account = { workspaceName: 'mis.studio', googleClientId: '__GOOGLE_CLIENT_ID__', allowedDomain: '' };
     // Migrate old DB.supabase credentials to separate pulse-supa-config key
     if (DB.supabase && DB.supabase.url && DB.supabase.anonKey) {
       try {
