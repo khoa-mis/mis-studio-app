@@ -1,0 +1,2709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grow — mis.studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="mis-studio.css">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+/* ── Pipeline ─────────────────────────────── */
+.pipeline-wrap{flex:1;overflow-x:auto;overflow-y:hidden;padding:24px;display:flex;gap:14px;align-items:stretch}
+
+.pipeline-col{width:240px;flex-shrink:0;display:flex;flex-direction:column;background:#F8F8F6;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+
+.pipeline-col.drag-over{background:#EAF0E2;border-color:var(--accent)}
+
+.pipeline-col.col-won{background:#EAF5E2}
+
+.pipeline-col.col-lost{background:#FBF0EF}
+
+.col-header{padding:12px 14px 10px;background:rgba(255,255,255,.7);border-bottom:1px solid var(--border);flex-shrink:0}
+
+.col-header-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:5px}
+
+.col-name{font-size:14px;font-weight:800;letter-spacing:.3px;text-transform:uppercase}
+
+.col-count{font-size:11px;font-weight:700;background:var(--border);color:var(--text-2);padding:2px 7px;border-radius:100px}
+
+.col-total{font-size:14px;font-weight:700;color:var(--accent)}
+
+.col-cards{flex:1;overflow-y:auto;padding:8px}
+
+.deal-card{background:#fff;border:1px solid var(--border);border-radius:6px;padding:11px 12px;margin-bottom:7px;cursor:grab;transition:all .12s;position:relative}
+
+.deal-card:hover{border-color:#ccc;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+
+.deal-card.dragging{opacity:.4;cursor:grabbing}
+
+.deal-card.drag-placeholder{background:#EAF0E2;border:2px dashed var(--accent);height:60px;border-radius:6px}
+
+.deal-name{font-size:13px;font-weight:700;color:var(--text);margin-bottom:2px}
+
+.deal-company{font-size:14px;color:var(--text-2);margin-bottom:7px}
+
+.deal-value{font-size:13px;font-weight:800;color:var(--accent);margin-bottom:6px}
+
+.deal-leads{display:flex;gap:5px;flex-wrap:wrap}
+
+.deal-lead-pip{font-size:10px;font-weight:700;background:var(--bg);border:1px solid var(--border);border-radius:100px;padding:2px 7px;color:var(--text-2)}
+.deal-proj-btn{display:flex;align-items:center;gap:4px;margin-top:7px;font-size:10px;font-weight:700;color:var(--accent);background:rgba(103,143,47,0.07);border:1px solid rgba(103,143,47,0.25);border-radius:100px;padding:2px 8px;cursor:pointer;transition:background .12s;width:fit-content}
+.deal-proj-btn:hover{background:rgba(103,143,47,0.15)}
+
+.col-add-btn{width:100%;padding:9px;text-align:center;font-size:14px;font-weight:600;color:var(--text-3);background:none;border:none;cursor:pointer;transition:color .12s}
+
+.col-add-btn:hover{color:var(--accent)}
+
+/* Won column accent */
+.col-won .col-name{color:var(--accent)}
+
+.col-won .deal-card{border-left:3px solid var(--accent)}
+
+/* Lost column accent */
+.col-lost .col-name{color:var(--danger)}
+
+.col-lost .deal-card{border-left:3px solid var(--danger);opacity:.65}
+
+/* ── Client Health ─────────────────────────── */
+.health-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;padding:24px;overflow-y:auto;flex:1}
+
+.health-card{background:#fff;border:1px solid var(--border);border-radius:8px;overflow:hidden;cursor:pointer;transition:box-shadow .12s}
+
+.health-card:hover{box-shadow:0 4px 16px rgba(0,0,0,.08)}
+
+.health-card-header{padding:14px 16px;display:flex;align-items:flex-start;justify-content:space-between;border-bottom:1px solid var(--bg)}
+
+.health-card-
+
+.health-month-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+
+.rag-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+
+.rag-green{background:var(--accent)}
+
+.rag-amber{background:#E07030}
+
+.rag-red{background:var(--danger)}
+
+.rag-gray{background:#D0D0CE}
+
+/* Health detail modal */
+.month-strip{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:16px}
+
+.month-pill{padding:6px 12px;border-radius:100px;font-size:14px;font-weight:700;cursor:pointer;border:1.5px solid var(--border);background:#fff;white-space:nowrap;transition:all .1s}
+
+.month-pill
+
+.health-score-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+
+.score-
+
+.score-dots{display:flex;gap:5px}
+
+.score-dot{width:18px;height:18px;border-radius:50%;border:2px solid var(--border);cursor:pointer;transition:all .1s}
+
+.score-dot.s1.sel{background:var(--danger);border-color:var(--danger)}
+
+.score-dot.s2.sel{background:#E07030;border-color:#E07030}
+
+.score-dot.s3.sel{background:#E8B84B;border-color:#E8B84B}
+
+.score-dot.s4.sel{background:#9BC25A;border-color:#9BC25A}
+
+.score-dot.s5.sel{background:var(--accent);border-color:var(--accent)}
+
+.score-dot:hover{transform:scale(1.2)}
+
+/* Settings */
+
+.th-std{padding:11px 12px;text-align:left;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3);border-bottom:1px solid var(--border)}
+.th-first{padding:11px 18px;text-align:left;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-3);border-bottom:1px solid var(--border)}
+.stat-card{background:#fff;border:1px solid var(--border);border-radius:6px;padding:14px 20px;min-width:120px}
+
+/* Extracted from repeated inline styles */
+.input-sm{font-size:14px;padding:6px 9px;border:1px solid var(--border);border-radius:3px;font-family:inherit}</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <svg xmlns="http://www.w3.org/2000/svg" width="100%" height="64" viewBox="0 0 397 319" style="display:block"><g transform="translate(1)"><text transform="translate(334 248)" fill="#fff" font-size="233" font-family="Manrope,sans-serif" letter-spacing="0.088em"><tspan x="-61.162" y="0">s</tspan></text><text transform="translate(101 249)" fill="#fff" font-size="234" font-family="Manrope,sans-serif" font-weight="500" letter-spacing="0.088em"><tspan x="-101.205" y="0">m</tspan></text><rect width="20" height="126" transform="translate(230 124)" fill="#fff"/><rect width="20" height="22" transform="translate(230 78)" fill="#fff"/></g></svg>
+  </div>
+  <div class="sidebar-section">
+    <div class="nav-item active" data-view="pipeline">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="5" height="18" rx="1"/></svg>
+      Pipeline
+    </div>
+    <div class="nav-item" data-view="health">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      Client Health
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Manage</div>
+    <div class="nav-item" data-view="clients">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Clients
+    </div>
+    <div class="nav-item" data-view="introducers">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      Introducers
+    </div>
+  </div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">System</div>
+    <div class="nav-item" data-view="settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+      Settings
+    </div>
+  </div>
+  <div class="sidebar-section" style="margin-top:auto;padding-top:6px"></div>
+  <div class="sidebar-section">
+    <div class="sidebar-label">Apps</div>
+      <div class="nav-item" onclick="window.location.href='trackr.html'" style="cursor:pointer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Trackr
+      </div>
+      <div class="nav-item" onclick="window.location.href='pay.html'" style="cursor:pointer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+        Pay
+      </div>
+      <div class="nav-item nav-item-current">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="5" height="18" rx="1"/></svg>
+        Grow
+      </div>
+  </div>
+</aside>
+
+<div class="main">
+  <div class="topbar">
+    <div id="topbar-title"><span style="color:var(--border);font-weight:300;margin-right:10px;letter-spacing:0">//</span>Grow</div>
+    <div class="topbar-actions" id="topbar-actions"></div>
+  </div>
+  <div class="content" id="main-content"></div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════
+//  CSM — mis.studio
+//  Grow Management
+//  Data key: csm-v1
+// ══════════════════════════════════════════════════════
+const KEY           = 'csm-v1';
+const GROW_ROW_ID   = 'grow-default';    // row in mis_workspaces
+const GROW_SAVED_AT = 'grow-local-saved-at';
+
+// Reuse the shared mis-supa-config (same Supabase instance as TRACKR/PAY)
+function growSupaCfg() {
+  try {
+    const r = JSON.parse(localStorage.getItem('mis-supa-config') || 'null');
+    if (r && r.url && r.anonKey) return r;
+  } catch(_) {}
+  return null;
+}
+
+// Format a team member's display name for deal card pills:
+// nickname first → first name + first initial of last name → first name only
+function memberShortName(m) {
+  if (!m) return '';
+  if (m.nickname) return m.nickname;
+  const parts = (m.name || '').trim().split(/\s+/);
+  if (parts.length >= 2) return parts[0] + ' ' + parts[parts.length - 1][0] + '.';
+  return parts[0] || '';
+}
+
+// Read currencies list from TRACKR (single source of truth), fallback to defaults
+function getCurrencies() {
+  try {
+    const t = JSON.parse(localStorage.getItem('mis-v1') || 'null');
+    if (t?.settings?.currencies?.length) return t.settings.currencies;
+  } catch(_) {}
+  return ['USD','EUR','GBP','SGD','CHF','AUD'];
+}
+
+async function growSupaFetch(path, opts = {}) {
+  const cfg = growSupaCfg();
+  if (!cfg) return null;
+  const url = cfg.url.replace(/\/$/, '') + '/rest/v1' + path;
+  const res = await fetch(url, {
+    ...opts,
+    headers: {
+      'apikey':        cfg.anonKey,
+      'Authorization': 'Bearer ' + cfg.anonKey,
+      'Content-Type':  'application/json',
+      'Prefer':        opts.prefer || '',
+      ...(opts.headers || {}),
+    },
+  });
+  if (!res.ok) { const t = await res.text(); throw new Error('Supabase ' + res.status + ': ' + t); }
+  return res.status === 204 ? null : res.json();
+}
+
+let _growSupabaseReady = false;
+let _growLastRemoteTs  = null;
+let _growLastPushAt    = 0;
+let _growSyncTimer     = null;
+let _growPollTimer     = null;
+
+async function growSupaPull() {
+  const cfg = growSupaCfg();
+  if (!cfg) { _growSupabaseReady = true; return false; }
+  try {
+    const rows = await growSupaFetch('/mis_workspaces?id=eq.' + encodeURIComponent(GROW_ROW_ID) + '&select=data,updated_at');
+    if (!rows || !rows.length || !rows[0].data) {
+      _growSupabaseReady = true;
+      return false;
+    }
+    const remoteTs = new Date(rows[0].updated_at).getTime();
+    const localTs  = new Date(localStorage.getItem(GROW_SAVED_AT) || 0).getTime();
+    if (localTs > remoteTs) {
+      _growSupabaseReady = true;
+      scheduleGrowPush();
+      return false;
+    }
+    DB = { ...DB, ...rows[0].data };
+    localStorage.setItem(KEY, JSON.stringify(DB));
+    localStorage.setItem(GROW_SAVED_AT, rows[0].updated_at); // keep local ts in sync with remote
+    _growLastRemoteTs = rows[0].updated_at;
+    _growSupabaseReady = true;
+    return true;
+  } catch(_) {
+    setTimeout(() => { _growSupabaseReady = true; }, 5000);
+    return false;
+  }
+}
+
+async function growSupaPush() {
+  const cfg = growSupaCfg();
+  if (!cfg) return;
+  if (!_growSupabaseReady) { scheduleGrowPush(); return; }
+  if (!DB.deals && !DB.columns) return;
+  _growLastPushAt = Date.now();
+  const pushedAt  = new Date().toISOString();
+  try {
+    await growSupaFetch('/mis_workspaces', {
+      method: 'POST',
+      prefer: 'resolution=merge-duplicates,return=minimal',
+      body: JSON.stringify({ id: GROW_ROW_ID, data: DB, updated_at: pushedAt }),
+    });
+    _growLastRemoteTs = pushedAt;
+    // Only update GROW_SAVED_AT if we haven't saved anything newer since the push started.
+    // If the user saved more data while the push was in flight, their newer timestamp wins.
+    const currentSaved = localStorage.getItem(GROW_SAVED_AT) || '0';
+    if (pushedAt >= currentSaved) localStorage.setItem(GROW_SAVED_AT, pushedAt);
+  } catch(_) {}
+}
+
+function scheduleGrowPush() {
+  clearTimeout(_growSyncTimer);
+  _growSyncTimer = setTimeout(() => growSupaPush(), 800);
+}
+
+async function _growPollChanges() {
+  if (Date.now() - _growLastPushAt < 5000) return;
+  try {
+    const rows = await growSupaFetch('/mis_workspaces?id=eq.' + encodeURIComponent(GROW_ROW_ID) + '&select=updated_at');
+    const ts = rows?.[0]?.updated_at || null;
+    if (!ts || ts === _growLastRemoteTs) return;
+    if (Date.now() - _growLastPushAt < 5000) { _growLastRemoteTs = ts; return; }
+    // Remote is newer — pull
+    const pulled = await growSupaPull();
+    if (pulled) renderView();
+  } catch(_) {}
+}
+
+function initGrowRealtime() {
+  if (!growSupaCfg()) return;
+  if (_growPollTimer) clearInterval(_growPollTimer);
+  growSupaFetch('/mis_workspaces?id=eq.' + encodeURIComponent(GROW_ROW_ID) + '&select=updated_at')
+    .then(rows => { _growLastRemoteTs = rows?.[0]?.updated_at || null; })
+    .catch(() => {});
+  _growPollTimer = setInterval(_growPollChanges, 8000);
+}
+let DB = {}, currentView = 'pipeline';
+
+// ── Persistence ───────────────────────────────────────
+function loadDB() {
+  try { DB = JSON.parse(localStorage.getItem(KEY) || 'null') || {}; } catch { DB = {}; }
+  if (!DB.columns)  DB.columns  = defaultColumns();
+  if (!DB.deals)    DB.deals    = [];
+  if (!DB.health)   DB.health   = {};
+  // Migration: remove the accidental Pre-Sales Lead pipeline column if present
+  if (DB.columns.find(c => c.id === 'presales')) {
+    // Move any deals stuck in that column to 'lead'
+    DB.deals.forEach(d => { if (d.stage === 'presales') d.stage = 'lead'; });
+    DB.columns = DB.columns.filter(c => c.id !== 'presales');
+    // Re-order remaining custom columns
+    DB.columns.filter(c => !c.fixed).sort((a,b)=>a.order-b.order).forEach((c,i)=>c.order=i);
+    saveDB();
+  }
+  if (!DB.settings) {
+    // Default currency from TRACKR's settings (single source of truth)
+    let defaultCurr = 'USD';
+    try {
+      const t = JSON.parse(localStorage.getItem('mis-v1') || 'null');
+      if (t?.settings?.defaultCurrency) defaultCurr = t.settings.defaultCurrency;
+    } catch(_) {}
+    DB.settings = { currency: defaultCurr };
+  }
+  if (!DB.introducers)  DB.introducers  = [];
+  // Migrate: pull existing inline introduction data up to introducers table (one-time)
+  (function migrateIntroductions() {
+    let changed = false;
+    DB.deals.forEach(d => {
+      const intro = d.introduction;
+      if (!intro?.name || d.introducerId) return; // already migrated or no intro
+      // Find or create introducer record
+      let existing = DB.introducers.find(r =>
+        r.name.toLowerCase() === intro.name.toLowerCase() &&
+        (!intro.email || r.email === intro.email)
+      );
+      if (!existing) {
+        existing = { id: genId('intr'), name: intro.name, company: intro.company||'',
+                     email: intro.email||'', phone: intro.phone||'', notes: intro.notes||'' };
+        DB.introducers.push(existing);
+      }
+      d.introducerId = existing.id;
+      // Keep commission on the deal, remove the contact fields
+      d.introduction = { commission: intro.commission || 0 };
+      changed = true;
+    });
+    if (changed) saveDB();
+  })();
+}
+function saveDB() {
+  try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch(_) {}
+  localStorage.setItem(GROW_SAVED_AT, new Date().toISOString());
+  scheduleGrowPush();
+}
+
+function defaultColumns() {
+  return [
+    { id:'lead',        name:'Lead',            color:'#4A7FC1', order:0 },
+    { id:'review',      name:'Needs Review',    color:'#9650B4', order:1 },
+    { id:'proposal',    name:'Proposal / Pitch',color:'#E07030', order:2 },
+    { id:'negotiation', name:'Negotiation',     color:'#E8B84B', order:3 },
+    { id:'won',         name:'Closed Won',      color:'#678F2F', order:4, fixed:true, won:true },
+    { id:'lost',        name:'Closed Lost',     color:'#C0392B', order:5, fixed:true, lost:true },
+  ];
+}
+
+function genId(prefix) {
+  return prefix + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+}
+
+// Always read team live from TRACKR (mis-v1) so it's shared
+function getTeam() { return getTrackrTeam(); }
+
+// Read clients from TRACKR's mis-v1 (classification: 'client' | 'prospect')
+function getClients() {
+  try {
+    const r = localStorage.getItem('mis-v1');
+    if (!r) return [];
+    return JSON.parse(r).clients || [];
+  } catch { return []; }
+}
+
+// Read all projects from TRACKR's mis-v1
+function getTrackrProjects() {
+  try {
+    const r = localStorage.getItem('mis-v1');
+    if (!r) return [];
+    return JSON.parse(r).projects || [];
+  } catch { return []; }
+}
+
+// Get the live project name for a deal — reads from TRACKR for linked Won deals
+// so the name is always up-to-date even if the local copy is stale.
+function getDealName(deal) {
+  if (deal?.csmProjectId) {
+    const proj = getTrackrProjects().find(p => p.id === deal.csmProjectId);
+    if (proj?.name) return proj.name;
+  }
+  return deal?.projectName || deal?.name || '';
+}
+
+// Save a new client (or update) back to TRACKR's mis-v1
+function saveClientToTrackr(client) {
+  try {
+    const raw = localStorage.getItem('mis-v1');
+    const data = raw ? JSON.parse(raw) : {};
+    if (!Array.isArray(data.clients)) data.clients = [];
+    const idx = data.clients.findIndex(c => c.id === client.id);
+    if (idx >= 0) data.clients[idx] = client;
+    else data.clients.push(client);
+    localStorage.setItem('mis-v1', JSON.stringify(data));
+    // Fire storage event so TRACKR (same or other tab) picks up the change and pushes to Supabase
+    window.dispatchEvent(new StorageEvent('storage', { key: 'mis-v1', newValue: JSON.stringify(data) }));
+  } catch(e) { }
+}
+
+// Save a new project into TRACKR's mis-v1.projects (triggers cross-tab storage event)
+// Push an updated project directly to TRACKR's Supabase workspace row.
+// This ensures other users see the change immediately without needing TRACKR open.
+// Shared optimistic-locking helper for cross-row writes to TRACKR's mis_workspaces row.
+// mutate(trackrData) modifies the data in place (or returns false to abort).
+// On 412 Precondition Failed: refetches once, re-applies, retries. On second 412: toasts.
+async function _trackrCrossRowWrite(workspaceId, mutate) {
+  const path = '/mis_workspaces?id=eq.' + encodeURIComponent(workspaceId) + '&select=data,updated_at';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const rows = await growSupaFetch(path);
+    if (!rows || !rows[0]?.data) return;
+    const trackrData = rows[0].data;
+    const prevUpdatedAt = rows[0].updated_at;
+    const proceed = mutate(trackrData);
+    if (proceed === false) return;
+    try {
+      await growSupaFetch('/mis_workspaces', {
+        method: 'POST',
+        prefer: 'resolution=merge-duplicates,return=minimal',
+        headers: { 'If-Match': prevUpdatedAt },
+        body: JSON.stringify({
+          id: workspaceId,
+          data: trackrData,
+          updated_at: new Date().toISOString(),
+        }),
+      });
+      return;
+    } catch (e) {
+      if (String(e && e.message).indexOf('412') !== -1 && attempt === 0) continue;
+      if (String(e && e.message).indexOf('412') !== -1) {
+        try { toast("TRACKR was updated by someone else — your project change wasn't saved, please retry", 'error'); } catch(_) {}
+        return;
+      }
+      throw e;
+    }
+  }
+}
+
+async function pushProjectToTrackrSupabase(project) {
+  const cfg = growSupaCfg();
+  if (!cfg) return;
+  const workspaceId = cfg.workspaceId || 'default';
+  try {
+    await _trackrCrossRowWrite(workspaceId, (trackrData) => {
+      if (!Array.isArray(trackrData.projects)) trackrData.projects = [];
+      const idx = trackrData.projects.findIndex(p => p.id === project.id);
+      if (idx >= 0) trackrData.projects[idx] = project;
+      else trackrData.projects.push(project);
+    });
+  } catch(_) {} // silently ignore — localStorage is already updated
+}
+
+// Delete a project from TRACKR's localStorage and Supabase workspace row.
+// Used when a deal is moved out of Closed Won — project no longer exists.
+async function deleteProjectFromTrackrSupabase(projectId) {
+  const cfg = growSupaCfg();
+  if (!cfg) return;
+  const workspaceId = cfg.workspaceId || 'default';
+  try {
+    await _trackrCrossRowWrite(workspaceId, (trackrData) => {
+      if (!Array.isArray(trackrData.projects)) return false;
+      const before = trackrData.projects.length;
+      trackrData.projects = trackrData.projects.filter(p => p.id !== projectId);
+      if (trackrData.projects.length === before) return false;
+    });
+  } catch(_) {}
+}
+
+function deleteProjectFromTrackr(projectId) {
+  try {
+    const raw = localStorage.getItem('mis-v1');
+    const data = raw ? JSON.parse(raw) : {};
+    if (!Array.isArray(data.projects)) return;
+    data.projects = data.projects.filter(p => p.id !== projectId);
+    localStorage.setItem('mis-v1', JSON.stringify(data));
+    window.dispatchEvent(new StorageEvent('storage', { key: 'mis-v1', newValue: JSON.stringify(data) }));
+  } catch(_) {}
+}
+
+function saveProjectToTrackr(project) {
+  try {
+    const raw = localStorage.getItem('mis-v1');
+    const data = raw ? JSON.parse(raw) : {};
+    if (!Array.isArray(data.projects)) data.projects = [];
+    const idx = data.projects.findIndex(p => p.id === project.id);
+    if (idx >= 0) data.projects[idx] = project;
+    else data.projects.push(project);
+    localStorage.setItem('mis-v1', JSON.stringify(data));
+    // Fire storage event manually for same-tab listeners (localStorage events
+    // only fire in OTHER tabs, so same-tab TRACKR instance won't auto-pick up)
+    window.dispatchEvent(new StorageEvent('storage', { key: 'mis-v1', newValue: JSON.stringify(data) }));
+  } catch(e) { }
+}
+
+// Check if a project already exists in TRACKR for this deal
+function getTrackrProjectForDeal(dealId) {
+  try {
+    const deal    = DB.deals.find(d => d.id === dealId);
+    const mis     = JSON.parse(localStorage.getItem('mis-v1') || '{}');
+    const projects = mis.projects || [];
+    // 1. Forward link: deal.csmProjectId → project.id (seeded deals)
+    // 2. Reverse link: project.csmDealId → dealId (converted deals)
+    const byLink = projects.find(p =>
+      (deal?.csmProjectId && p.id === deal.csmProjectId) ||
+      p.csmDealId === dealId
+    );
+    if (byLink) return byLink;
+    // 3. Fallback: match by project name + clientId (handles legacy deals missing link IDs)
+    if (deal?.projectName && deal?.clientId) {
+      return projects.find(p => p.name === deal.projectName && p.clientId === deal.clientId) || null;
+    }
+    return null;
+  } catch { return null; }
+}
+
+// Compute the canonical value + currency for a deal.
+// For Won deals linked to a TRACKR project, use the live project budget.
+function resolveDealValue(deal) {
+  if (deal.csmProjectId) {
+    const proj = getTrackrProjects().find(p => p.id === deal.csmProjectId);
+    if (proj) {
+      const bt = proj.billingType || 'time_materials';
+      const coSum = (proj.changeOrders || [])
+        .filter(co => co.status !== 'rejected')
+        .reduce((s, co) => s + (co.value || 0), 0);
+      let val = 0;
+      if (bt === 'fixed')             val = (proj.fixedFee || 0) + coSum;
+      else if (bt === 'retainer')     val = proj.retainer?.monthlyFee || 0;
+      else if (bt === 'variable_retainer') val = proj.variableRetainer?.yearlyBudget || 0;
+      // time_materials: no fixed total, show 0
+      const curr = proj.currency || deal.currency || DB.settings.currency || 'USD';
+      const label = bt === 'retainer' ? '/mo' : bt === 'variable_retainer' ? '/yr' : '';
+      return { value: val, currency: curr, label };
+    }
+  }
+  return { value: deal.value || 0, currency: deal.currency || DB.settings.currency || 'USD', label: '' };
+}
+
+function fmtVal(n, curr) {
+  if (!n) return '—';
+  return new Intl.NumberFormat('en-US', { style:'currency', currency: curr||DB.settings.currency||'USD', minimumFractionDigits:0, maximumFractionDigits:0 }).format(n);
+}
+
+// ── Toast ─────────────────────────────────────────────
+let _toastTimer;
+function toast(msg, type='success') {
+  const old = document.querySelector('.toast');
+  if (old) { old.remove(); clearTimeout(_toastTimer); }
+  const icons = { success:'✅', error:'😬', info:'💡' };
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `<span class="toast-icon">${icons[type]||'✅'}</span><span class="toast-msg">${msg}</span>`;
+  const dismiss = () => { el.classList.add('leaving'); clearTimeout(_toastTimer); setTimeout(() => el.remove(), 240); };
+  el.addEventListener('click', dismiss);
+  document.body.appendChild(el);
+  _toastTimer = setTimeout(dismiss, type === 'error' ? 4000 : 3000);
+}
+
+// ── Modal ─────────────────────────────────────────────
+function showModal(title, bodyHTML, maxWidth = '680px') {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:${maxWidth}">
+      <div class="modal-header">
+        <div class="modal-title">${title}</div>
+        <button class="modal-close" id="modal-close">✕</button>
+      </div>
+      <div class="modal-body">${bodyHTML}</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#modal-close').onclick = () => overlay.remove();
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  return overlay;
+}
+
+function confirmModal(title, body, confirmLabel, onConfirm, danger = true) {
+  const overlay = showModal(title, `
+    <div style="font-size:13px;color:var(--text-2);line-height:1.6;margin-bottom:20px">${body}</div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" id="cm-cancel-btn">Cancel</button>
+      <button class="btn btn-primary" id="cm-ok-btn" style="${danger ? 'background:var(--danger)' : ''}">${confirmLabel}</button>
+    </div>
+  `);
+  overlay.querySelector('#cm-cancel-btn').onclick = () => overlay.remove();
+  overlay.querySelector('#cm-ok-btn').onclick = () => { overlay.remove(); onConfirm(); };
+  return overlay;
+}
+
+// ── Navigation ────────────────────────────────────────
+function navigate(view) {
+  currentView = view;
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === view));
+  const titles = { pipeline:'Pipeline', clients:'Clients', health:'Client Health', settings:'Settings', introducers:'Introducers' };
+  document.getElementById('topbar-title').innerHTML = `<span style="color:var(--border);font-weight:300;margin-right:10px;letter-spacing:0">//</span>${titles[view]||view.charAt(0).toUpperCase()+view.slice(1)}`;
+  renderView();
+}
+
+function renderView() {
+  const el   = document.getElementById('main-content');
+  const acts = document.getElementById('topbar-actions');
+  acts.innerHTML = '';
+  el.innerHTML = '';
+  el.classList.remove('content-full');
+  // Full-bleed views manage their own layout; standard views use shared .content padding
+  if (currentView === 'pipeline') {
+    el.style.cssText = 'padding:0;overflow:hidden;display:flex;flex-direction:column;flex:1';
+    renderPipeline(el, acts);
+  } else if (currentView === 'health') {
+    el.style.cssText = 'padding:0;overflow:hidden;display:flex;flex-direction:column;flex:1';
+    renderHealth(el, acts);
+  } else {
+    el.style.cssText = '';  // use shared .content CSS (padding:32px 36px, overflow-y:auto)
+    if      (currentView === 'clients')     renderClientsList(el, acts);
+    else if (currentView === 'introducers') renderIntroducers(el, acts);
+    else if (currentView === 'settings')    renderSettings(el, acts);
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  PIPELINE
+// ════════════════════════════════════════════════════════
+let _dragId = null;
+let _dragPlaceholder = null;
+let _showLost = false; // Lost column hidden by default
+
+function renderPipeline(el, acts) {
+  // Acts bar — Show Lost toggle + add button
+  const toggleBtn = document.createElement('button');
+  toggleBtn.className = 'btn btn-ghost btn-sm';
+  toggleBtn.style.cssText = `font-size:14px;${_showLost ? 'color:var(--danger);border-color:var(--danger)' : ''}`;
+  toggleBtn.innerHTML = _showLost
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg> Hide Lost'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> Show Lost';
+  toggleBtn.onclick = () => { _showLost = !_showLost; renderView(); };
+  acts.appendChild(toggleBtn);
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'btn btn-primary btn-sm';
+  addBtn.innerHTML = '+ Add Deal';
+  addBtn.onclick = () => showDealModal(null);
+  acts.appendChild(addBtn);
+
+  // Default: show all columns except Lost. Toggle shows Lost too.
+  let sortedCols = [...DB.columns].sort((a,b) => a.order - b.order);
+  if (!_showLost) sortedCols = sortedCols.filter(c => !c.lost);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'pipeline-wrap';
+  el.appendChild(wrap);
+
+  sortedCols.forEach(col => {
+    const trackrProjectIds = new Set(getTrackrProjects().map(p => p.id));
+    // Remove Won deals with no linked TRACKR project — they're orphans
+    if (col.won) {
+      const before = DB.deals.length;
+      DB.deals = DB.deals.filter(d => d.stage !== col.id || (d.csmProjectId && trackrProjectIds.has(d.csmProjectId)));
+      if (DB.deals.length < before) saveDB();
+    }
+    const colDeals = DB.deals.filter(d => {
+        if (d.stage !== col.id) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        // Closed Won: alphabetical by project name
+        if (col.won) return getDealName(a).localeCompare(getDealName(b));
+        // Other columns: newest first (createdAt desc)
+        return (b.createdAt||'').localeCompare(a.createdAt||'');
+      });
+    const total    = colDeals.reduce((s, d) => s + (resolveDealValue(d).value || 0), 0);
+
+    const colEl = document.createElement('div');
+    colEl.className = 'pipeline-col' + (col.won ? ' col-won' : col.lost ? ' col-lost' : '');
+    colEl.dataset.col = col.id;
+
+    colEl.innerHTML = `
+      <div class="col-header">
+        <div class="col-header-top">
+          <span class="col-name" style="color:${col.color}">${col.name}</span>
+          <span class="col-count">${colDeals.length}</span>
+        </div>
+        ${total > 0 ? `<div class="col-total">${fmtVal(total)}</div>` : '<div class="col-total" style="color:#ADADAB">—</div>'}
+      </div>
+      <div class="col-cards" id="col-cards-${col.id}"></div>
+      ${!col.lost ? `<button class="col-add-btn" data-col="${col.id}">+ Add deal</button>` : ''}
+    `;
+
+    wrap.appendChild(colEl);
+
+    // Render cards
+    const cardsEl = colEl.querySelector(`#col-cards-${col.id}`);
+    colDeals.forEach(deal => {
+      cardsEl.appendChild(buildDealCard(deal, col));
+    });
+
+    // Drop zone wiring
+    wireDropZone(colEl, col.id);
+
+    // Add deal button
+    colEl.querySelector('.col-add-btn')?.addEventListener('click', () => showDealModal(null, col.id));
+  });
+}
+
+function buildDealCard(deal, col) {
+  const card = document.createElement('div');
+  card.className = 'deal-card';
+  card.draggable = true;
+  card.dataset.id = deal.id;
+
+  const team = getTeam();
+  const psl  = deal.preSalesLead ? team.find(t => t.id === deal.preSalesLead) : null;
+  const tl   = deal.teamLead ? team.find(t => t.id === deal.teamLead) : null;
+  const tec  = deal.techLead ? team.find(t => t.id === deal.techLead) : null;
+  const intr = deal.introducerId ? (DB.introducers||[]).find(r => r.id === deal.introducerId) : null;
+
+  // Resolve client name — from TRACKR clients or legacy name field
+  const client = deal.clientId ? getClients().find(c => c.id === deal.clientId) : null;
+  const clientName   = client?.name || deal.name || '';
+  const liveProjectName = getDealName(deal);
+  const projectLabel = liveProjectName && liveProjectName !== clientName ? liveProjectName : null;
+
+  // Resolve value live from TRACKR project if linked
+  const { value: resolvedVal, currency: resolvedCurr, label: valLabel } = resolveDealValue(deal);
+
+  // Resolve dates — linked project is the authoritative source; fall back to deal's own fields
+  const linkedProjDates = deal.csmProjectId ? getTrackrProjects().find(p => p.id === deal.csmProjectId) : null;
+  const cardStartDate   = linkedProjDates?.startDate  || deal.startDate || null;
+  const cardEndDate     = linkedProjDates?.closedDate || deal.endDate   || null;
+  function fmtCardDate(d) {
+    if (!d) return '';
+    const dt = new Date(d + 'T00:00:00');
+    return dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' });
+  }
+  const dateLineHTML = (cardStartDate || cardEndDate)
+    ? `<div style="font-size:10px;color:var(--text-3);margin-top:5px;display:flex;align-items:center;gap:4px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        ${cardStartDate ? fmtCardDate(cardStartDate) : '—'}
+        <span style="opacity:.5">→</span>
+        ${cardEndDate ? fmtCardDate(cardEndDate) : '—'}
+       </div>`
+    : '';
+
+  card.innerHTML = `
+    <div class="deal-name">${projectLabel || clientName}</div>
+    ${projectLabel ? `<div class="deal-company">${clientName}</div>` : (deal.company ? `<div class="deal-company">${deal.company}</div>` : '')}
+    ${resolvedVal ? `<div class="deal-value">${fmtVal(resolvedVal, resolvedCurr)}${valLabel ? `<span style="font-size:10px;font-weight:600;opacity:.6;margin-left:2px">${valLabel}</span>` : ''}</div>` : ''}
+    ${dateLineHTML}
+    <div class="deal-leads">
+      ${psl ? `<span class="deal-lead-pip" style="background:#F0EDF7;border-color:#C8BAE8;color:#7a3cbe">PSL: ${memberShortName(psl)}</span>` : ''}
+      ${tl  ? `<span class="deal-lead-pip">AL: ${memberShortName(tl)}</span>` : ''}
+      ${tec ? `<span class="deal-lead-pip">Tech: ${memberShortName(tec)}</span>` : ''}
+      ${intr ? `<span class="deal-lead-pip" style="background:#FFF8E7;border-color:#F5D78E;color:#8a6a10" title="Introduced by ${intr.name}${intr.company ? ' · '+intr.company : ''}${deal.introduction?.commission ? ' · '+deal.introduction.commission+'% commission' : ''}">↗ ${intr.name.split(' ')[0]}${deal.introduction?.commission ? ' · '+deal.introduction.commission+'%' : ''}</span>` : ''}
+    </div>
+  `;
+
+  // Drag events
+  card.addEventListener('dragstart', e => {
+    _dragId = deal.id;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  card.addEventListener('dragend', () => {
+    _dragId = null;
+    card.classList.remove('dragging');
+    document.querySelectorAll('.drag-placeholder').forEach(p => p.remove());
+    document.querySelectorAll('.drag-over').forEach(c => c.classList.remove('drag-over'));
+  });
+
+  // Click to edit deal
+  card.addEventListener('click', () => showDealModal(deal));
+
+  // Project settings button — only on Won deals with a linked project
+  if (col?.won && deal.csmProjectId) {
+    const settingsBtn = document.createElement('button');
+    settingsBtn.className = 'deal-proj-btn';
+    settingsBtn.title = 'Edit project settings in TRACKR';
+    settingsBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg> Project`;
+    settingsBtn.addEventListener('click', e => {
+      e.stopPropagation(); // don't open the deal modal
+      showLinkedProjectModal(deal);
+    });
+    card.appendChild(settingsBtn);
+  }
+
+  return card;
+}
+
+function wireDropZone(colEl, colId) {
+  colEl.addEventListener('dragover', e => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    colEl.classList.add('drag-over');
+
+    // Position placeholder
+    const cardsEl = colEl.querySelector('.col-cards');
+    const afterEl = getDragAfterElement(cardsEl, e.clientY);
+    const ph = document.querySelector('.drag-placeholder') || (() => {
+      const p = document.createElement('div');
+      p.className = 'deal-card drag-placeholder';
+      return p;
+    })();
+    if (!afterEl) cardsEl.appendChild(ph);
+    else cardsEl.insertBefore(ph, afterEl);
+  });
+
+  colEl.addEventListener('dragleave', e => {
+    if (!colEl.contains(e.relatedTarget)) colEl.classList.remove('drag-over');
+  });
+
+  colEl.addEventListener('drop', e => {
+    e.preventDefault();
+    colEl.classList.remove('drag-over');
+    document.querySelector('.drag-placeholder')?.remove();
+    if (!_dragId) return;
+    const deal = DB.deals.find(d => d.id === _dragId);
+    if (!deal) return;
+    const prevStage = deal.stage;
+    const col       = DB.columns.find(c => c.id === colId);
+    const prevCol   = DB.columns.find(c => c.id === prevStage);
+
+    // Moving INTO Closed Won → re-open linked project or auto-create if none exists
+    if (col?.won && prevStage !== colId) {
+      deal.stage = colId;
+      if (!deal.wonAt) deal.wonAt = new Date().toISOString().slice(0,10);
+      saveDB();
+
+      // If a linked project exists, clear its closedDate so it reappears in TRACKR.
+      // Read from localStorage (includes projects that may have been closed but not deleted).
+      const allProjects = (() => { try { return JSON.parse(localStorage.getItem('mis-v1')||'{}').projects || []; } catch(_){return [];} })();
+      const existingProj = deal.csmProjectId
+        ? allProjects.find(p => p.id === deal.csmProjectId)
+        : allProjects.find(p => p.csmDealId === deal.id);
+
+      if (existingProj) {
+        existingProj.closedDate = '';
+        saveProjectToTrackr(existingProj);
+        pushProjectToTrackrSupabase(existingProj);
+        renderView();
+        // Open the project settings modal so user can configure billing type, budget, dates etc.
+        showLinkedProjectModal(deal);
+      } else {
+        // New project — create it first, then open the project modal once the ID is set
+        renderView();
+        autoCreateProjectForDeal(deal);
+        // Wait a tick for autoCreate to finish writing csmProjectId, then open the modal
+        setTimeout(() => {
+          const freshDeal = DB.deals.find(d => d.id === deal.id);
+          if (freshDeal?.csmProjectId) showLinkedProjectModal(freshDeal);
+        }, 400);
+      }
+      return;
+    }
+
+    // Moving OUT of Closed Won → check if linked project has hours
+    if (prevCol?.won && !col?.won && prevStage !== colId) {
+      const proj = deal.csmProjectId
+        ? getTrackrProjects().find(p => p.id === deal.csmProjectId)
+        : null;
+
+      if (proj) {
+        // Check for logged time entries against this project
+        try {
+          const mis = JSON.parse(localStorage.getItem('mis-v1') || '{}');
+          const hasHours = (mis.timeEntries || []).some(e => e.projectId === proj.id);
+          if (hasHours) {
+            toast('Cannot move — this project has logged hours in TRACKR', 'error');
+            renderView(); // reset drag visual
+            return;
+          }
+        } catch(_) {}
+
+        // Clear the deal link FIRST so storage event callbacks don't find a stale link
+        deal.csmProjectId = null;
+        // Remove the project from TRACKR entirely (localStorage + Supabase)
+        deleteProjectFromTrackr(proj.id);
+        deleteProjectFromTrackrSupabase(proj.id);
+      }
+
+      deal.stage = colId;
+      deal.wonAt = null; // clear so it can be re-won later
+      saveDB();
+      renderView();
+      toast(`Moved back to ${col?.name || colId}${proj ? ' — project removed from TRACKR' : ''}`);
+      return;
+    }
+
+    deal.stage = colId;
+    saveDB();
+    renderView();
+    if (prevStage !== colId) toast(`Moved to ${col?.name || colId}`);
+  });
+}
+
+function getDragAfterElement(container, y) {
+  const draggableEls = [...container.querySelectorAll('.deal-card:not(.dragging):not(.drag-placeholder)')];
+  return draggableEls.reduce((closest, child) => {
+    const box = child.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset) return { offset, element: child };
+    return closest;
+  }, { offset: Number.NEGATIVE_INFINITY }).element;
+}
+
+// ── Deal Modal ────────────────────────────────────────
+function showDealModal(deal, defaultStage) {
+  const isEdit = !!deal;
+  const sortedCols = [...DB.columns].sort((a,b) => a.order - b.order);
+  const clients = getClients();
+  const team = getTeam();
+  const teamOptions = team.map(t => `<option value="${t.id}">${memberShortName(t)}</option>`).join('');
+  const stageOptions = sortedCols.map(col =>
+    `<option value="${col.id}" ${(deal?.stage||defaultStage||'lead')===col.id?'selected':''}>${col.name}</option>`
+  ).join('');
+  // Client options — all clients and prospects from TRACKR
+  const clientOptions = clients.map(cl =>
+    `<option value="${cl.id}" ${deal?.clientId===cl.id?'selected':''}>${cl.name}${cl.classification==='prospect'?' (Prospect)':''}</option>`
+  ).join('');
+  // Resolve linked TRACKR project — used to keep date fields in sync
+  const linkedProjForDates = deal?.csmProjectId
+    ? getTrackrProjects().find(p => p.id === deal.csmProjectId)
+    : null;
+  // For linked projects use proj.startDate/closedDate as the authoritative source;
+  // fall back to the deal's own stored dates for unlinked pipeline deals.
+  const initStartDate = linkedProjForDates?.startDate || deal?.startDate || '';
+  const initEndDate   = linkedProjForDates?.closedDate || deal?.endDate  || '';
+
+  const o = showModal(isEdit ? (getDealName(deal) || 'Edit Deal') : 'New Deal', `
+    <div class="section-divider">Client</div>
+    <div class="form-row" style="align-items:flex-end">
+      <div class="form-group" style="flex:2">
+        <label>Client</label>
+        <select id="d-client">
+          <option value="">— Select or create below —</option>
+          ${clientOptions}
+        </select>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm" id="d-new-client" style="flex-shrink:0;margin-bottom:1px">+ New Client</button>
+    </div>
+    <div id="d-new-client-form" style="display:none;background:#F8F8F6;border:1px solid #E2E2E2;border-radius:4px;padding:14px;margin-bottom:8px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#898987;margin-bottom:10px">New Client Details</div>
+      <div id="d-nc-similar" style="display:none;margin-bottom:10px;padding:8px 10px;background:rgba(212,160,23,0.1);border-radius:4px;font-size:12px;color:#B8860B"></div>
+      <div class="form-row">
+        <div class="form-group"><label>Name</label><input id="d-nc-name" placeholder="e.g. Acme Corp" style="font-size:13px"></div>
+        <div class="form-group">
+          <label>Classification</label>
+          <select id="d-nc-class" style="font-size:13px">
+            <option value="client">Client</option>
+            <option value="prospect">Prospect</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Email</label><input type="email" id="d-nc-email" placeholder="contact@company.com" style="font-size:13px"></div>
+        <div class="form-group"><label>Phone</label><input id="d-nc-phone" placeholder="+1 555 0100" style="font-size:13px"></div>
+      </div>
+    </div>
+    <div class="section-divider">Deal</div>
+    <div class="form-row">
+      <div class="form-group full"><label>Project Name</label><input id="d-project" value="${getDealName(deal)}" placeholder="e.g. Website Redesign"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Deal Value</label><input type="number" id="d-value" value="${deal?.value||''}" placeholder="0" min="0" step="100"></div>
+      <div class="form-group"><label>Currency</label>
+        <select id="d-currency">
+          ${getCurrencies().map(cur=>`<option value="${cur}" ${(deal?.currency||DB.settings.currency||'USD')===cur?'selected':''}>${cur}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group"><label>Stage</label><select id="d-stage">${stageOptions}</select></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Billing Type</label>
+        <select id="d-billing-type">
+          <option value="fixed"             ${(deal?.billingType||'fixed')==='fixed'            ?'selected':''}>Fixed Fee</option>
+          <option value="retainer"          ${deal?.billingType==='retainer'                    ?'selected':''}>Monthly Retainer (Fixed)</option>
+          <option value="variable_retainer" ${deal?.billingType==='variable_retainer'           ?'selected':''}>Monthly Retainer (Variable)</option>
+          <option value="time_materials"    ${deal?.billingType==='time_materials'              ?'selected':''}>Time &amp; Materials</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Start Date</label><input type="date" id="d-start-date" value="${initStartDate}"></div>
+      <div class="form-group"><label>${linkedProjForDates ? 'Close Date' : 'End Date'}</label><input type="date" id="d-end-date" value="${initEndDate}"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Pre-Sales Lead</label>
+        <select id="d-presales"><option value="">— None —</option>${teamOptions}</select>
+      </div>
+      <div class="form-group"><label>Account Lead</label>
+        <select id="d-tl"><option value="">— None —</option>${teamOptions}</select>
+      </div>
+      <div class="form-group"><label>Technical Lead</label>
+        <select id="d-tech"><option value="">— None —</option>${teamOptions}</select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group full"><label>Notes</label><textarea id="d-notes">${deal?.notes||''}</textarea></div>
+    </div>
+    <div class="section-divider">Introduction <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:#ADADAB">— who referred or introduced this opportunity</span></div>
+    <div class="form-row">
+      <div class="form-group" style="flex:2">
+        <label>Introducer</label>
+        <select id="d-introducer-sel">
+          <option value="">— None —</option>
+          ${DB.introducers.map(r => `<option value="${r.id}" ${deal?.introducerId===r.id?'selected':''}>${r.name}${r.company?' · '+r.company:''}</option>`).join('')}
+          <option value="__new__">+ Add new introducer…</option>
+        </select>
+      </div>
+      <div class="form-group" style="max-width:160px">
+        <label>Commission %</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="number" id="d-intro-commission" value="${deal?.introduction?.commission||''}" placeholder="0" min="0" max="100" step="0.5">
+          <span id="d-commission-calc" style="font-size:14px;color:var(--accent);white-space:nowrap;font-weight:700"></span>
+        </div>
+      </div>
+    </div>
+    <div id="d-new-introducer-form" style="display:none;background:#F8F8F6;border:1px solid var(--border);border-radius:4px;padding:14px;margin-bottom:8px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#898987;margin-bottom:10px">New Introducer</div>
+      <div class="form-row">
+        <div class="form-group"><label>Name</label><input id="d-ni-name" placeholder="e.g. James Wong"></div>
+        <div class="form-group"><label>Company</label><input id="d-ni-company" placeholder="e.g. Acme Corp"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Email</label><input type="email" id="d-ni-email" placeholder="james@acme.com"></div>
+        <div class="form-group"><label>Phone</label><input id="d-ni-phone" placeholder="+1 555 0100"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group full"><label>Notes</label><input id="d-ni-notes" placeholder="How they know you, how you met…"></div>
+      </div>
+    </div>
+    <div class="form-actions">
+      ${isEdit ? `<button class="btn btn-ghost btn-sm" id="d-del" style="color:#C0392B;margin-right:auto">Delete</button>` : ''}
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-primary" id="d-save">${isEdit ? 'Update' : 'Add Deal'}</button>
+    </div>
+  `, '620px');
+
+  // Pre-select leads
+  if (deal?.preSalesLead) o.querySelector('#d-presales').value = deal.preSalesLead;
+  if (deal?.teamLead)     o.querySelector('#d-tl').value       = deal.teamLead;
+  if (deal?.techLead)     o.querySelector('#d-tech').value     = deal.techLead;
+
+  // Introducer dropdown — show/hide new introducer form
+  o.querySelector('#d-introducer-sel').addEventListener('change', function() {
+    const form = o.querySelector('#d-new-introducer-form');
+    form.style.display = this.value === '__new__' ? 'block' : 'none';
+    if (this.value === '__new__') o.querySelector('#d-ni-name')?.focus();
+  });
+
+  // Live commission calculator
+  function updateCommissionCalc() {
+    const pct  = parseFloat(o.querySelector('#d-intro-commission').value) || 0;
+    const val  = parseFloat(o.querySelector('#d-value').value) || 0;
+    const curr = o.querySelector('#d-currency').value;
+    const calc = o.querySelector('#d-commission-calc');
+    if (calc) calc.textContent = pct && val ? '= ' + fmtVal(val * pct / 100, curr) : '';
+  }
+  o.querySelector('#d-intro-commission').addEventListener('input', updateCommissionCalc);
+  o.querySelector('#d-value').addEventListener('input', updateCommissionCalc);
+  o.querySelector('#d-currency').addEventListener('change', updateCommissionCalc);
+  updateCommissionCalc();
+
+  // Toggle new client form
+  o.querySelector('#d-new-client').addEventListener('click', () => {
+    const form = o.querySelector('#d-new-client-form');
+    const showing = form.style.display !== 'none';
+    form.style.display = showing ? 'none' : 'block';
+    o.querySelector('#d-new-client').textContent = showing ? '+ New Client' : '− Cancel';
+    if (!showing) o.querySelector('#d-client').value = '';
+  });
+
+  // Warn if typed name matches an existing client
+  o.querySelector('#d-nc-name').addEventListener('input', e => {
+    const val = e.target.value.toLowerCase().trim();
+    const similar = o.querySelector('#d-nc-similar');
+    if (!val || val.length < 3) { similar.style.display = 'none'; return; }
+    const matches = getClients().filter(c => {
+      const cn = c.name.toLowerCase();
+      return cn.includes(val) || val.includes(cn) || cn.startsWith(val) || val.startsWith(cn);
+    });
+    if (matches.length) {
+      similar.style.display = 'block';
+      similar.innerHTML = `⚠ Similar client${matches.length>1?'s':''} already exist: ${matches.map(c=>`<strong>${c.name}</strong>`).join(', ')} — consider selecting from the dropdown above instead.`;
+    } else {
+      similar.style.display = 'none';
+    }
+  });
+
+  o.querySelector('#d-save').onclick = () => {
+    // Handle new client creation if form is visible
+    let clientId = o.querySelector('#d-client').value;
+    const newClientForm = o.querySelector('#d-new-client-form');
+    if (newClientForm.style.display !== 'none') {
+      const ncName = o.querySelector('#d-nc-name').value.trim();
+      if (!ncName) { toast('Client name required', 'error'); return; }
+      // Check if a client with this name already exists
+      const existingClient = getClients().find(c => c.name.toLowerCase().trim() === ncName.toLowerCase());
+      if (existingClient) {
+        clientId = existingClient.id;
+        o.querySelector('#d-new-client-form').style.display = 'none';
+        toast(`Using existing client "${existingClient.name}"`);
+      } else {
+        const newClient = {
+          id:             genId('cl'),
+          name:           ncName,
+          classification: o.querySelector('#d-nc-class').value,
+          email:          o.querySelector('#d-nc-email').value.trim(),
+          phone:          o.querySelector('#d-nc-phone').value.trim(),
+          currency:       DB.settings.currency || 'USD',
+          billingModel:   'standard',
+          rateCard:       {},
+          logo:           '',
+          createdAt:      new Date().toISOString().slice(0,10),
+        };
+        saveClientToTrackr(newClient);
+        clientId = newClient.id;
+      }
+    }
+
+    if (!clientId) { toast('Select or create a client', 'error'); return; }
+    const projectName = o.querySelector('#d-project').value.trim();
+    const stage = o.querySelector('#d-stage').value;
+    const col   = DB.columns.find(col => col.id === stage);
+    const client = getClients().find(cl => cl.id === clientId) || {};
+
+    const data = {
+      // Preserve all system/link fields from the existing deal when editing
+      ...(deal ? {
+        csmProjectId: deal.csmProjectId || null,
+        csmDealId:    deal.csmDealId    || null,
+      } : {}),
+      id:          deal?.id || genId('deal'),
+      clientId,
+      projectName: projectName || client.name,
+      name:        client.name || projectName, // legacy compat
+      value:       parseFloat(o.querySelector('#d-value').value) || 0,
+      currency:    o.querySelector('#d-currency').value,
+      billingType: o.querySelector('#d-billing-type').value || 'fixed',
+      stage,
+      preSalesLead: o.querySelector('#d-presales').value || null,
+      teamLead:    o.querySelector('#d-tl').value || null,
+      techLead:    o.querySelector('#d-tech').value || null,
+      notes:       o.querySelector('#d-notes').value.trim(),
+      introduction: { commission: parseFloat(o.querySelector('#d-intro-commission').value) || 0 },
+      startDate:   o.querySelector('#d-start-date').value || null,
+      endDate:     o.querySelector('#d-end-date').value || null,
+      createdAt:   deal?.createdAt || new Date().toISOString().slice(0,10),
+      wonAt:       deal?.wonAt || (col?.won ? new Date().toISOString().slice(0,10) : null),
+    };
+
+    // Handle introducer — create new if needed
+    const intrSel = o.querySelector('#d-introducer-sel').value;
+    if (intrSel === '__new__') {
+      const niName = o.querySelector('#d-ni-name').value.trim();
+      if (!niName) { toast('Introducer name required', 'error'); return; }
+      const newIntr = {
+        id:      genId('intr'),
+        name:    niName,
+        company: o.querySelector('#d-ni-company').value.trim(),
+        email:   o.querySelector('#d-ni-email').value.trim(),
+        phone:   o.querySelector('#d-ni-phone').value.trim(),
+        notes:   o.querySelector('#d-ni-notes').value.trim(),
+      };
+      DB.introducers.push(newIntr);
+      data.introducerId = newIntr.id;
+    } else {
+      data.introducerId = intrSel || null;
+    }
+    if (isEdit) { const idx = DB.deals.findIndex(d => d.id === deal.id); if (idx>=0) DB.deals[idx] = data; }
+    else DB.deals.push(data);
+    saveDB();
+
+    // Sync to TRACKR project BEFORE removing the modal — avoids detached-DOM read issues
+    const linkedProj = getTrackrProjectForDeal(data.id);
+    if (linkedProj) {
+      let projChanged = false;
+      // Use data.projectName (already computed) — never read from the modal DOM after o.remove()
+      if (data.projectName && data.projectName !== linkedProj.name)      { linkedProj.name     = data.projectName; projChanged = true; }
+      if (data.clientId    && data.clientId    !== linkedProj.clientId)  { linkedProj.clientId = data.clientId;    projChanged = true; }
+      if (data.currency    && data.currency    !== linkedProj.currency)  { linkedProj.currency = data.currency;    projChanged = true; }
+      if (data.teamLead    !== undefined && data.teamLead !== linkedProj.leadId) { linkedProj.leadId = data.teamLead || ''; projChanged = true; }
+      // Sync dates — deal.startDate → proj.startDate, deal.endDate → proj.closedDate
+      const dStart = data.startDate || '';
+      const dEnd   = data.endDate   || '';
+      if (dStart !== (linkedProj.startDate  || '')) { linkedProj.startDate  = dStart; projChanged = true; }
+      if (dEnd   !== (linkedProj.closedDate || '')) { linkedProj.closedDate = dEnd;   projChanged = true; }
+      if (projChanged) {
+        // Keep deal's stored projectName in sync too so offline display is correct
+        const idx2 = DB.deals.findIndex(d => d.id === data.id);
+        if (idx2 >= 0) { DB.deals[idx2].projectName = linkedProj.name; DB.deals[idx2].name = linkedProj.name; }
+        saveProjectToTrackr(linkedProj);
+        pushProjectToTrackrSupabase(linkedProj); // also push directly to Supabase so TRACKR picks it up
+        saveDB();
+      }
+    }
+
+    o.remove(); renderView();
+    toast(isEdit ? 'Deal updated ✓' : 'Deal added ✓');
+
+    // If moved INTO Closed Won and project exists but was closed — re-open it
+    if (col?.won && data.csmProjectId) {
+      const proj = getTrackrProjects().find(p => p.id === data.csmProjectId);
+      if (proj && proj.closedDate) {
+        proj.closedDate = '';
+        saveProjectToTrackr(proj);
+        pushProjectToTrackrSupabase(proj);
+      }
+    }
+
+    // If moved into Closed Won and no project yet, auto-create one
+    // data.csmProjectId is preserved from existing deal so this won't fire on edits
+    if (col?.won && !data.csmProjectId && !getTrackrProjectForDeal(data.id)) {
+      setTimeout(() => autoCreateProjectForDeal(data), 200);
+    }
+
+    // If moved OUT of Closed Won via the modal, remove the linked TRACKR project
+    // (same logic as the drag handler — only if no hours logged)
+    const prevCol2 = deal ? DB.columns.find(c => c.id === deal.stage) : null;
+    if (isEdit && prevCol2?.won && !col?.won && data.csmProjectId) {
+      const projToRemove = getTrackrProjects().find(p => p.id === data.csmProjectId);
+      if (projToRemove) {
+        try {
+          const mis = JSON.parse(localStorage.getItem('mis-v1') || '{}');
+          const hasHours = (mis.timeEntries || []).some(e => e.projectId === projToRemove.id);
+          if (hasHours) {
+            toast('Warning: this project has logged hours in TRACKR — project kept but deal moved', 'error');
+          } else {
+            deleteProjectFromTrackr(projToRemove.id);
+            deleteProjectFromTrackrSupabase(projToRemove.id);
+            data.csmProjectId = null; // already set on the saved deal above
+            const idx2 = DB.deals.findIndex(d => d.id === data.id);
+            if (idx2 >= 0) DB.deals[idx2].csmProjectId = null;
+            saveDB();
+          }
+        } catch(_) {}
+      }
+    }
+  };
+
+  if (isEdit) {
+    o.querySelector('#d-del').onclick = () => {
+      o.remove();
+      confirmModal('Delete Deal', `Remove <strong>${getDealName(deal)||deal.name}</strong> permanently?`, 'Delete', () => {
+        DB.deals = DB.deals.filter(d => d.id !== deal.id);
+        saveDB(); renderView(); toast('Deal deleted');
+      });
+    };
+  }
+}
+
+
+// ════════════════════════════════════════════════════════
+//  CONVERT TO PROJECT MODAL
+// ════════════════════════════════════════════════════════
+function autoCreateProjectForDeal(deal) {
+  // Don't create if one already exists
+  if (getTrackrProjectForDeal(deal.id)) return;
+  if (!deal.clientId && !deal.projectName) return;
+
+  const project = {
+    id:              genId('pr'),
+    csmDealId:       deal.id,
+    name:            getDealName(deal) || (getClients().find(c => c.id === deal.clientId)?.name) || deal.name,
+    clientId:        deal.clientId || null,
+    currency:        deal.currency || DB.settings.currency || 'USD',
+    leadId:          deal.teamLead || '',
+    billingType:     'time_materials',
+    retainer:        { hoursIncluded:0, monthlyFee:0, overageEnabled:false, overageRate:0, billingDay:1 },
+    fixedFee:        0,
+    variableRetainer:{ yearlyBudget:0, hourlyRate:0, approvals:{} },
+    startDate:       deal.wonAt || new Date().toISOString().slice(0,10),
+    closedDate:      '',
+    rateOverrides:   {},
+    members:         [],
+    files:           [],
+  };
+
+  // Set csmProjectId on the deal BEFORE calling saveProjectToTrackr.
+  // saveProjectToTrackr fires a StorageEvent synchronously which triggers
+  // seedProjectsIntoPipeline — if csmProjectId isn't set yet the dedup
+  // check misses and creates a duplicate Won deal.
+  const idx = DB.deals.findIndex(d => d.id === deal.id);
+  if (idx >= 0) { DB.deals[idx].csmProjectId = project.id; saveDB(); }
+
+  saveProjectToTrackr(project);
+  pushProjectToTrackrSupabase(project); // push directly to Supabase so TRACKR sees it even if not open
+
+  toast(`Project "${project.name}" created in TRACKR ✓ — set billing type there`);
+}
+
+
+// ════════════════════════════════════════════════════════
+//  CLIENT HEALTH
+// ════════════════════════════════════════════════════════
+const HEALTH_CATS = [
+  { id:'communication', label:'Communication' },
+  { id:'delivery',      label:'Delivery / Output' },
+  { id:'satisfaction',  label:'Client Satisfaction' },
+  { id:'relationship',  label:'Relationship' },
+  { id:'risk',          label:'Risk Level' },
+];
+
+function ragFromScores(scores) {
+  if (!scores || !Object.keys(scores).length) return 'gray';
+  const vals = Object.values(scores).filter(Boolean);
+  if (!vals.length) return 'gray';
+  const avg = vals.reduce((a,b)=>a+b,0) / vals.length;
+  if (avg >= 4) return 'green';
+  if (avg >= 2.5) return 'amber';
+  return 'red';
+}
+
+function ragLabel(rag) {
+  return { green:'Healthy', amber:'Needs Attention', red:'At Risk', gray:'No Data' }[rag] || 'No Data';
+}
+
+function latestHealthMonth(contactId) {
+  const months = Object.keys(DB.health[contactId] || {}).sort().reverse();
+  return months[0] || null;
+}
+
+function renderHealth(el, acts) {
+  const wonDeals = DB.deals.filter(d => {
+    const col = DB.columns.find(c => c.id === d.stage);
+    return col?.won;
+  });
+
+  if (!wonDeals.length) {
+    el.innerHTML = `<div style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:#ADADAB">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#E2E2E2" stroke-width="1.5"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      <p style="font-size:14px">No closed won clients yet.</p>
+      <p style="font-size:14px">Move a deal to Closed Won in the Pipeline to track their health here.</p>
+    </div>`;
+    return;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'health-grid';
+  el.appendChild(grid);
+
+  wonDeals.forEach(deal => {
+    const _team = getTeam();
+    const tl   = deal.teamLead ? _team.find(t => t.id === deal.teamLead) : null;
+    const tech = deal.techLead ? _team.find(t => t.id === deal.techLead) : null;
+    const latestMonth = latestHealthMonth(deal.id);
+    const latestData  = latestMonth ? (DB.health[deal.id]?.[latestMonth] || {}) : {};
+    const rag = ragFromScores(latestData.scores);
+
+    const card = document.createElement('div');
+    card.className = 'health-card';
+    card.innerHTML = `
+      <div class="health-card-header">
+        <div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:3px">${getDealName(deal)}</div>
+          <div style="font-size:14px;color:#898987">${getClients().find(c=>c.id===deal.clientId)?.name || deal.company || ''}</div>
+          <div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap">
+            ${tl   ? `<span class="badge badge-gray">AL: ${tl.name}</span>` : '<span class="badge badge-gray" style="color:#ADADAB">No Account Lead</span>'}
+            ${tech ? `<span class="badge badge-blue">Tech: ${tech.name}</span>` : ''}
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div class="rag-dot rag-${rag}" style="width:14px;height:14px;margin-left:auto;margin-bottom:4px"></div>
+          <div style="font-size:11px;font-weight:700;color:${rag==='green'?'#678F2F':rag==='amber'?'#E07030':rag==='red'?'#C0392B':'#ADADAB'}">${ragLabel(rag)}</div>
+          ${latestMonth ? `<div style="font-size:10px;color:#ADADAB;margin-top:2px">${latestMonth}</div>` : ''}
+        </div>
+      </div>
+      <div class="health-card-body">
+        ${HEALTH_CATS.map(cat => {
+          const score = latestData.scores?.[cat.id] || 0;
+          const dotColor = score>=4?'#678F2F':score>=3?'#9BC25A':score>=2?'#E07030':score>=1?'#C0392B':'#E2E2E2';
+          return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
+            <span style="font-size:11px;color:#898987">${cat.label}</span>
+            <div style="display:flex;gap:3px">
+              ${[1,2,3,4,5].map(i=>`<div style="width:10px;height:10px;border-radius:50%;background:${i<=score?dotColor:'#F0EFED'};border:1px solid ${i<=score?dotColor:'#E2E2E2'}"></div>`).join('')}
+            </div>
+          </div>`;
+        }).join('')}
+        ${latestData.notes ? `<div style="font-size:11px;color:#898987;margin-top:8px;padding-top:8px;border-top:1px solid #F2F1EE;line-height:1.5">${latestData.notes}</div>` : ''}
+      </div>
+    `;
+    card.addEventListener('click', () => showHealthModal(deal));
+    grid.appendChild(card);
+  });
+}
+
+function showHealthModal(deal) {
+  // Generate last 12 months
+  const today = new Date();
+  const months = [];
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    months.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`);
+  }
+
+  if (!DB.health[deal.id]) DB.health[deal.id] = {};
+
+  let _selMonth = latestHealthMonth(deal.id) || months[0];
+
+  const _tm  = getTeam();
+  const tl   = deal.teamLead ? _tm.find(t => t.id === deal.teamLead) : null;
+  const tech = deal.techLead ? _tm.find(t => t.id === deal.techLead) : null;
+  const teamOptions = _tm.map(t => `<option value="${t.id}">${memberShortName(t)}</option>`).join('');
+
+  function buildContent() {
+    const data = DB.health[deal.id]?.[_selMonth] || { scores:{}, notes:'', teamLead: deal.teamLead, techLead: deal.techLead };
+    const rag = ragFromScores(data.scores);
+    return `
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+        <div>
+          <div style="font-size:15px;font-weight:700">${getDealName(deal)}</div>
+          <div style="font-size:13px;color:#898987">${getClients().find(c=>c.id===deal.clientId)?.name || deal.company || ''}</div>
+        </div>
+        <div style="margin-left:auto;text-align:right">
+          <span class="badge ${rag==='green'?'badge-green':rag==='amber'?'badge-amber':rag==='red'?'badge-red':'badge-gray'}">${ragLabel(rag)}</span>
+        </div>
+      </div>
+      <div class="month-strip" id="h-month-strip">
+        ${months.map(m => `<button class="month-pill ${m===_selMonth?'active':''}" data-m="${m}">${m}</button>`).join('')}
+      </div>
+      <div class="section-divider">Assigned Leads</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Account Lead</label>
+          <select id="h-tl"><option value="">— None —</option>${teamOptions}</select>
+        </div>
+        <div class="form-group">
+          <label>Technical Lead</label>
+          <select id="h-tech"><option value="">— None —</option>${teamOptions}</select>
+        </div>
+      </div>
+      <div class="section-divider">Health Scores — ${_selMonth}</div>
+      ${HEALTH_CATS.map(cat => `
+        <div class="health-score-row">
+          <div class="score-label">${cat.label}</div>
+          <div class="score-dots" id="sdots-${cat.id}">
+            ${[1,2,3,4,5].map(i => `<div class="score-dot s${i} ${(data.scores?.[cat.id]||0)>=i?'sel':''}" data-cat="${cat.id}" data-v="${i}"></div>`).join('')}
+          </div>
+          <div style="font-size:14px;color:#ADADAB;margin-left:8px" id="slbl-${cat.id}">${['—','Critical','Poor','Fair','Good','Excellent'][data.scores?.[cat.id]||0]}</div>
+        </div>
+      `).join('')}
+      <div class="form-row" style="margin-top:14px">
+        <div class="form-group full">
+          <label>Notes for ${_selMonth}</label>
+          <textarea id="h-notes">${data.notes||''}</textarea>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Close</button>
+        <button class="btn btn-primary" id="h-save">Save</button>
+      </div>
+    `;
+  }
+
+  const o = showModal(`Client Health — ${getDealName(deal)}`, buildContent(), '580px');
+
+  // Pre-select leads
+  const curData = DB.health[deal.id]?.[_selMonth] || {};
+  o.querySelector('#h-tl').value   = curData.teamLead  || deal.teamLead  || '';
+  o.querySelector('#h-tech').value = curData.techLead || deal.techLead || '';
+
+  function rewire() {
+    o.querySelector('.modal-body').innerHTML = buildContent();
+    const d = DB.health[deal.id]?.[_selMonth] || {};
+    o.querySelector('#h-tl').value   = d.teamLead  || deal.teamLead  || '';
+    o.querySelector('#h-tech').value = d.techLead || deal.techLead || '';
+    bindEvents();
+  }
+
+  function bindEvents() {
+    // Month pills
+    o.querySelectorAll('.month-pill').forEach(btn => {
+      btn.addEventListener('click', () => { _selMonth = btn.dataset.m; rewire(); });
+    });
+
+    // Score dots
+    o.querySelectorAll('.score-dot').forEach(dot => {
+      dot.addEventListener('click', () => {
+        const cat = dot.dataset.cat, v = parseInt(dot.dataset.v);
+        const m = _selMonth;
+        if (!DB.health[deal.id][m]) DB.health[deal.id][m] = { scores:{}, notes:'' };
+        const cur = DB.health[deal.id][m].scores?.[cat] || 0;
+        DB.health[deal.id][m].scores = DB.health[deal.id][m].scores || {};
+        DB.health[deal.id][m].scores[cat] = cur === v ? 0 : v; // toggle off if same
+        saveDB();
+        // Update dots inline
+        const dots = o.querySelectorAll(`[data-cat="${cat}"]`);
+        const newV = DB.health[deal.id][m].scores[cat];
+        dots.forEach(d => { d.classList.toggle('sel', parseInt(d.dataset.v) <= newV); });
+        o.querySelector(`#slbl-${cat}`).textContent = ['—','Critical','Poor','Fair','Good','Excellent'][newV];
+      });
+    });
+
+    // Save
+    o.querySelector('#h-save')?.addEventListener('click', () => {
+      const m = _selMonth;
+      if (!DB.health[deal.id][m]) DB.health[deal.id][m] = { scores:{}, notes:'' };
+      DB.health[deal.id][m].notes    = o.querySelector('#h-notes').value.trim();
+      DB.health[deal.id][m].teamLead = o.querySelector('#h-tl').value || null;
+      DB.health[deal.id][m].techLead = o.querySelector('#h-tech').value || null;
+      // Also update deal leads
+      deal.teamLead = DB.health[deal.id][m].teamLead;
+      deal.techLead = DB.health[deal.id][m].techLead;
+      const idx = DB.deals.findIndex(d => d.id === deal.id);
+      if (idx >= 0) { DB.deals[idx].teamLead = deal.teamLead; DB.deals[idx].techLead = deal.techLead; }
+      saveDB();
+      o.remove();
+      renderView();
+      toast('Health record saved ✓');
+    });
+  }
+
+  bindEvents();
+}
+
+// ════════════════════════════════════════════════════════
+//  INTRODUCERS
+// ════════════════════════════════════════════════════════
+function renderIntroducers(el, acts) {
+  const introducers = DB.introducers || [];
+  const deals       = DB.deals || [];
+
+  // Topbar — Add Introducer button
+  const addBtn = document.createElement('button');
+  addBtn.className = 'btn btn-primary btn-sm';
+  addBtn.textContent = '+ Add Introducer';
+  acts.appendChild(addBtn);
+  addBtn.onclick = () => showIntroducerModal(null, () => renderView());
+
+  // Stats bar
+  const totalDeals = deals.filter(d => d.introducerId).length;
+  const totalCommission = deals.reduce((sum, d) => {
+    if (!d.introducerId || !d.introduction?.commission) return sum;
+    return sum + (d.value || 0) * (d.introduction.commission / 100);
+  }, 0);
+  const curr = DB.settings.currency || 'USD';
+
+  el.innerHTML = `
+    <div style="display:flex;gap:16px;margin-bottom:24px">
+      <div class="card" style="flex:1;padding:16px 20px">
+        <div class="lbl" style="margin-bottom:4px">Introducers</div>
+        <div style="font-size:28px;font-weight:300;color:var(--text)">${introducers.length}</div>
+      </div>
+      <div class="card" style="flex:1;padding:16px 20px">
+        <div class="lbl" style="margin-bottom:4px">Deals Introduced</div>
+        <div style="font-size:28px;font-weight:300;color:var(--text)">${totalDeals}</div>
+      </div>
+      <div class="card" style="flex:1;padding:16px 20px">
+        <div class="lbl" style="margin-bottom:4px">Total Commission Exposure</div>
+        <div style="font-size:28px;font-weight:300;color:var(--accent)">${fmtVal(totalCommission, curr)}</div>
+      </div>
+    </div>
+    ${introducers.length === 0 ? `
+      <div class="card">
+        <div class="empty-state">
+          <p>No introducers yet. Add someone who referred a deal to start tracking commissions.</p>
+        </div>
+      </div>` : introducers.map(intr => {
+        const intrDeals = deals.filter(d => d.introducerId === intr.id);
+        const intrCommission = intrDeals.reduce((sum, d) =>
+          sum + (d.value || 0) * ((d.introduction?.commission || 0) / 100), 0);
+        const dealCount = intrDeals.length;
+        return `
+        <div class="card mb-20" id="intr-card-${intr.id}">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:${dealCount?'16px':'0'}">
+            <div style="display:flex;align-items:center;gap:14px">
+              <div style="width:40px;height:40px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex-shrink:0">
+                ${intr.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}
+              </div>
+              <div>
+                <div style="font-weight:700;font-size:15px;color:var(--text)">${intr.name}</div>
+                ${intr.company ? `<div style="font-size:14px;color:#898987;margin-top:1px">${intr.company}</div>` : ''}
+                <div style="display:flex;gap:12px;margin-top:4px;flex-wrap:wrap">
+                  ${intr.email ? `<a href="mailto:${intr.email}" style="font-size:14px;color:var(--accent);text-decoration:none">${intr.email}</a>` : ''}
+                  ${intr.phone ? `<span style="font-size:14px;color:#898987">${intr.phone}</span>` : ''}
+                </div>
+                ${intr.notes ? `<div style="font-size:14px;color:#898987;margin-top:4px;font-style:italic">${intr.notes}</div>` : ''}
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+              ${intrCommission > 0 ? `<div style="text-align:right;margin-right:8px">
+                <div class="lbl">Commission</div>
+                <div style="font-size:15px;font-weight:700;color:var(--accent)">${fmtVal(intrCommission, curr)}</div>
+              </div>` : ''}
+              <button class="btn btn-ghost btn-sm intr-edit-btn" data-id="${intr.id}">Edit</button>
+              ${dealCount === 0 ? `<button class="btn btn-ghost btn-sm intr-del-btn" data-id="${intr.id}" style="color:var(--danger)">Delete</button>` : ''}
+            </div>
+          </div>
+          ${dealCount > 0 ? `
+          <div style="border-top:1px solid var(--border);padding-top:12px">
+            <div class="lbl" style="margin-bottom:8px">Deals Introduced (${dealCount})</div>
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+              <thead>
+                <tr style="background:#F7F7F7">
+                  <th style="padding:6px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#ADADAB;border-bottom:1px solid var(--border)">Deal</th>
+                  <th style="padding:6px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#ADADAB;border-bottom:1px solid var(--border)">Stage</th>
+                  <th style="padding:6px 12px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#ADADAB;border-bottom:1px solid var(--border)">Value</th>
+                  <th style="padding:6px 12px;text-align:center;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#ADADAB;border-bottom:1px solid var(--border)">Commission %</th>
+                  <th style="padding:6px 12px;text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#ADADAB;border-bottom:1px solid var(--border)">Commission Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${intrDeals.map(d => {
+                  const col = DB.columns.find(c => c.id === d.stage);
+                  const pct = d.introduction?.commission || 0;
+                  const commVal = (d.value || 0) * (pct / 100);
+                  const dCurr = d.currency || curr;
+                  return `<tr style="border-bottom:1px solid #F2F1EE">
+                    <td style="padding:8px 12px">
+                      <div style="font-weight:600">${getDealName(d) || '—'}</div>
+                      ${d.clientId ? `<div style="font-size:11px;color:#898987">${getClients().find(cl=>cl.id===d.clientId)?.name||''}</div>` : ''}
+                    </td>
+                    <td style="padding:8px 12px">
+                      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${col?.color||'#ADADAB'};margin-right:5px"></span>
+                      <span style="color:#898987">${col?.name||d.stage}</span>
+                    </td>
+                    <td style="padding:8px 12px;text-align:right;font-weight:600">${d.value ? fmtVal(d.value, dCurr) : '—'}</td>
+                    <td style="padding:8px 12px;text-align:center">
+                      <input type="number" class="intr-pct-inp" data-deal="${d.id}"
+                        value="${pct||''}" min="0" max="100" step="0.5" placeholder="0"
+                        style="width:60px;text-align:center;border:1px solid var(--border);border-radius:3px;padding:3px 6px;font-size:13px;font-weight:600;font-family:inherit">
+                      <span style="color:#898987">%</span>
+                    </td>
+                    <td style="padding:8px 12px;text-align:right;font-weight:700;color:${commVal>0?'var(--accent)':'#ADADAB'}" class="intr-comm-val" data-deal="${d.id}">
+                      ${commVal > 0 ? fmtVal(commVal, dCurr) : '—'}
+                    </td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>` : ''}
+        </div>`;
+      }).join('')}
+  `;
+
+  // Wire edit buttons
+  el.querySelectorAll('.intr-edit-btn').forEach(btn => {
+    btn.onclick = () => {
+      const intr = DB.introducers.find(r => r.id === btn.dataset.id);
+      if (intr) showIntroducerModal(intr, () => renderView());
+    };
+  });
+
+  // Wire delete buttons
+  el.querySelectorAll('.intr-del-btn').forEach(btn => {
+    btn.onclick = () => {
+      const intr = DB.introducers.find(r => r.id === btn.dataset.id);
+      if (!intr) return;
+      confirmModal('Delete Introducer', `Remove <strong>${intr.name}</strong>? This cannot be undone.`, 'Delete', () => {
+        DB.introducers = DB.introducers.filter(r => r.id !== btn.dataset.id);
+        saveDB(); renderView(); toast(intr.name + ' removed');
+      });
+    };
+  });
+
+  // Wire commission % inputs — live-edit per deal
+  el.querySelectorAll('.intr-pct-inp').forEach(inp => {
+    const update = () => {
+      const deal = DB.deals.find(d => d.id === inp.dataset.deal);
+      if (!deal) return;
+      if (!deal.introduction) deal.introduction = {};
+      deal.introduction.commission = parseFloat(inp.value) || 0;
+      saveDB();
+      // Update the commission value cell in place
+      const dCurr = deal.currency || curr;
+      const commVal = (deal.value || 0) * (deal.introduction.commission / 100);
+      const valCell = el.querySelector(`.intr-comm-val[data-deal="${deal.id}"]`);
+      if (valCell) {
+        valCell.textContent = commVal > 0 ? fmtVal(commVal, dCurr) : '—';
+        valCell.style.color = commVal > 0 ? 'var(--accent)' : '#ADADAB';
+      }
+    };
+    inp.addEventListener('blur', update);
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); });
+    inp.addEventListener('focus', () => { inp.style.borderColor = 'var(--accent)'; });
+    inp.addEventListener('blur',  () => { inp.style.borderColor = 'var(--border)'; });
+  });
+}
+
+// ════════════════════════════════════════════════════════
+//  LINKED PROJECT MODAL (edit TRACKR project from Grow)
+// ════════════════════════════════════════════════════════
+function showLinkedProjectModal(deal) {
+  // Resolve the linked TRACKR project — read ALL projects (including closed)
+  const allProjects = (() => { try { return JSON.parse(localStorage.getItem('mis-v1')||'{}').projects || []; } catch(_){return [];} })();
+  const p = deal.csmProjectId
+    ? allProjects.find(pr => pr.id === deal.csmProjectId)
+    : allProjects.find(pr => pr.csmDealId === deal.id);
+
+  if (!p) { toast('No linked TRACKR project found', 'error'); return; }
+
+  const billingType = p.billingType || 'time_materials';
+  const retainer    = p.retainer    || { hoursIncluded:0, monthlyFee:0, overageEnabled:false, overageRate:0, billingDay:1 };
+  const vr          = p.variableRetainer || { yearlyBudget:0, hourlyRate:0, approvals:{} };
+  const fixedFee    = p.fixedFee || '';
+
+  const clients  = getClients();
+  const team     = getTrackrTeam();
+  const currencies = getCurrencies();
+
+  const clientOptions = clients.map(c =>
+    `<option value="${c.id}" ${c.id === p.clientId ? 'selected' : ''}>${c.name}</option>`
+  ).join('');
+  const leadOptions = team.map(m => {
+    const name = m.nickname ? m.nickname : (m.name||'').split(' ').map((w,i,a) => i===0 ? w : w[0]+'.').join(' ');
+    return `<option value="${m.id}" ${m.id === p.leadId ? 'selected' : ''}>${name}</option>`;
+  }).join('');
+  const currOptions = currencies.map(cu =>
+    `<option value="${cu}" ${cu === p.currency ? 'selected' : ''}>${cu}</option>`
+  ).join('');
+
+  const body = `
+    <div class="form-row">
+      <div class="form-group full">
+        <label>Project Name</label>
+        <input type="text" id="lp-name" value="${p.name||''}" placeholder="e.g. Website Redesign">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Client</label>
+        <select id="lp-client">
+          <option value="">Select client…</option>
+          ${clientOptions}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Currency</label>
+        <select id="lp-currency">
+          <option value="">Inherit from client</option>
+          ${currOptions}
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Project Lead</label>
+        <select id="lp-lead">
+          <option value="">— No lead assigned —</option>
+          ${leadOptions}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Billing Type</label>
+        <select id="lp-billing-type">
+          <option value="time_materials"    ${billingType==='time_materials'   ?'selected':''}>Time &amp; Materials</option>
+          <option value="retainer"          ${billingType==='retainer'         ?'selected':''}>Monthly Retainer (Fixed)</option>
+          <option value="variable_retainer" ${billingType==='variable_retainer'?'selected':''}>Monthly Retainer (Variable)</option>
+          <option value="fixed"             ${billingType==='fixed'            ?'selected':''}>Fixed Scope / Fixed Cost</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- T&M budget -->
+    <div id="lp-tm-section" style="display:${billingType==='time_materials'?'block':'none'}">
+      <div class="section-divider">Budget <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:#ADADAB">(optional)</span></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Total Budget</label>
+          <input type="number" id="lp-tm-budget" value="${p.tmBudget||''}" placeholder="e.g. 50000" min="0">
+          <div class="form-hint">Value cap for burn tracking.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Retainer -->
+    <div id="lp-retainer-section" style="display:${billingType==='retainer'?'block':'none'}">
+      <div class="section-divider">Retainer Settings</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Hours Included / Month</label>
+          <input type="number" id="lp-retainer-hours" value="${retainer.hoursIncluded||''}" placeholder="e.g. 40" min="0" step="0.5">
+        </div>
+        <div class="form-group">
+          <label>Monthly Fee</label>
+          <input type="number" id="lp-retainer-fee" value="${retainer.monthlyFee||''}" placeholder="e.g. 3200" min="0">
+          <div class="form-hint" id="lp-retainer-blended-hint" style="margin-top:4px"></div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Billing Cycle Start Day</label>
+          <input type="number" id="lp-billing-day" value="${retainer.billingDay||1}" min="1" max="28" placeholder="1">
+        </div>
+        <div class="form-group" style="flex-direction:row;align-items:center;gap:10px;padding-top:8px">
+          <input type="checkbox" id="lp-overage-enabled" ${retainer.overageEnabled?'checked':''} style="width:16px;height:16px;flex-shrink:0">
+          <label for="lp-overage-enabled" style="font-weight:500;cursor:pointer;margin:0">Bill overage hours beyond included amount</label>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group" id="lp-overage-rate-group" style="display:${retainer.overageEnabled?'flex':'none'}">
+          <label>Overage Rate / Hour</label>
+          <input type="number" id="lp-overage-rate" value="${retainer.overageRate||''}" placeholder="e.g. 120" min="0">
+        </div>
+      </div>
+    </div>
+
+    <!-- Fixed fee -->
+    <div id="lp-fixed-section" style="display:${billingType==='fixed'?'block':'none'}">
+      <div class="section-divider">Fixed Fee</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Total Fixed Fee</label>
+          <input type="number" id="lp-fixed-fee" value="${fixedFee||''}" placeholder="e.g. 25000" min="0">
+          <div class="form-hint">Billing = this fixed amount.</div>
+        </div>
+      </div>
+      <div class="section-divider">Billing Milestones <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:#ADADAB">— requires start &amp; close dates</span></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Deposit %</label>
+          <input type="number" id="lp-ms-deposit" value="${p.fixedMilestones?.deposit ?? 25}" min="0" max="100" step="1">
+          <div class="form-hint">Raised at project start.</div>
+        </div>
+        <div class="form-group">
+          <label>Progress billing %</label>
+          <input type="number" id="lp-ms-midpoint" value="${p.fixedMilestones?.midpoint ?? 50}" min="0" max="100" step="1">
+          <div class="form-hint">Raised at the trigger point.</div>
+        </div>
+        <div class="form-group">
+          <label>Closeout %</label>
+          <input type="number" id="lp-ms-closeout" value="${p.fixedMilestones?.closeout ?? 25}" readonly style="background:#F8F8F6;color:#ADADAB">
+          <div class="form-hint" id="lp-ms-sum-hint">Auto — remainder to 100.</div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group" style="max-width:200px">
+          <label>Progress trigger</label>
+          <input type="number" id="lp-ms-trigger" value="${p.fixedMilestones?.midpointTrigger ?? 70}" min="1" max="99" step="1">
+          <div class="form-hint">% of timeline elapsed when progress bill is raised.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Variable retainer -->
+    <div id="lp-variable-retainer-section" style="display:${billingType==='variable_retainer'?'block':'none'}">
+      <div class="section-divider">Variable Retainer Settings</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Yearly Budget</label>
+          <input type="number" id="lp-vr-yearly-budget" value="${vr.yearlyBudget||''}" placeholder="e.g. 120000" min="0">
+        </div>
+        <div class="form-group">
+          <label>Default Hourly Rate</label>
+          <input type="number" id="lp-vr-hourly-rate" value="${vr.hourlyRate||''}" placeholder="e.g. 100" min="0">
+        </div>
+      </div>
+    </div>
+
+    <div class="section-divider">Project Dates</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Start Date <span style="font-size:10px;color:#ADADAB;font-weight:400">(optional)</span></label>
+        <input type="date" id="lp-start-date" value="${p.startDate||''}">
+        <div class="form-hint">Project hidden from months before this date.</div>
+      </div>
+      <div class="form-group">
+        <label>Close Date <span style="font-size:10px;color:#ADADAB;font-weight:400">(optional)</span></label>
+        <input type="date" id="lp-close-date" value="${p.closedDate||''}">
+        <div class="form-hint">Project hidden from months after this date.</div>
+      </div>
+    </div>
+
+    <div class="form-actions" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-primary" id="lp-save">Update Project</button>
+    </div>
+  `;
+
+  const o = showModal(`Project Settings — ${p.name}`, body, '620px');
+
+  // Billing type toggle
+  const btSel = o.querySelector('#lp-billing-type');
+  btSel.addEventListener('change', () => {
+    o.querySelector('#lp-tm-section').style.display              = btSel.value === 'time_materials'    ? 'block' : 'none';
+    o.querySelector('#lp-retainer-section').style.display        = btSel.value === 'retainer'          ? 'block' : 'none';
+    o.querySelector('#lp-fixed-section').style.display           = btSel.value === 'fixed'             ? 'block' : 'none';
+    o.querySelector('#lp-variable-retainer-section').style.display = btSel.value === 'variable_retainer' ? 'block' : 'none';
+  });
+
+  // Overage toggle
+  o.querySelector('#lp-overage-enabled').addEventListener('change', function() {
+    o.querySelector('#lp-overage-rate-group').style.display = this.checked ? 'flex' : 'none';
+  });
+
+  // Blended rate hint
+  function updateBlended() {
+    const h = parseFloat(o.querySelector('#lp-retainer-hours').value) || 0;
+    const f = parseFloat(o.querySelector('#lp-retainer-fee').value)   || 0;
+    const curr = o.querySelector('#lp-currency').value || getCurrencies()[0] || 'USD';
+    const hint = o.querySelector('#lp-retainer-blended-hint');
+    if (hint) hint.textContent = h > 0 && f > 0 ? `≈ ${fmtVal(f/h, curr)}/h blended rate` : '';
+  }
+  o.querySelector('#lp-retainer-hours').addEventListener('input', updateBlended);
+  o.querySelector('#lp-retainer-fee').addEventListener('input',   updateBlended);
+  updateBlended();
+
+  // Milestone closeout live update
+  function updateLpMilestoneCloseout() {
+    const dep = parseFloat(o.querySelector('#lp-ms-deposit')?.value) || 0;
+    const mid = parseFloat(o.querySelector('#lp-ms-midpoint')?.value) || 0;
+    const co  = o.querySelector('#lp-ms-closeout');
+    const hint = o.querySelector('#lp-ms-sum-hint');
+    if (!co) return;
+    co.value = Math.max(0, 100 - dep - mid);
+    if (hint) hint.textContent = 'Auto — remainder to 100.';
+  }
+  o.querySelector('#lp-ms-deposit')?.addEventListener('input', updateLpMilestoneCloseout);
+  o.querySelector('#lp-ms-midpoint')?.addEventListener('input', updateLpMilestoneCloseout);
+  updateLpMilestoneCloseout();
+
+  // Save
+  o.querySelector('#lp-save').onclick = () => {
+    const name = o.querySelector('#lp-name').value.trim();
+    if (!name) { toast('Project name is required', 'error'); return; }
+
+    const bt       = o.querySelector('#lp-billing-type').value;
+    const clientId = o.querySelector('#lp-client').value || p.clientId;
+    const currency = o.querySelector('#lp-currency').value;
+    const leadId   = o.querySelector('#lp-lead').value;
+
+    const retainerData = {
+      hoursIncluded:  parseFloat(o.querySelector('#lp-retainer-hours').value) || 0,
+      monthlyFee:     parseFloat(o.querySelector('#lp-retainer-fee').value)   || 0,
+      overageEnabled: o.querySelector('#lp-overage-enabled').checked,
+      overageRate:    parseFloat(o.querySelector('#lp-overage-rate').value)   || 0,
+      billingDay:     parseInt(o.querySelector('#lp-billing-day').value)       || 1,
+    };
+
+    const msDeposit  = parseFloat(o.querySelector('#lp-ms-deposit')?.value)  ?? 25;
+    const msMidpoint = parseFloat(o.querySelector('#lp-ms-midpoint')?.value) ?? 50;
+    const msTrigger  = parseFloat(o.querySelector('#lp-ms-trigger')?.value)  ?? 70;
+    const msCloseout = Math.max(0, 100 - msDeposit - msMidpoint);
+
+    // Merge changes onto a fresh copy of the project (preserves all other TRACKR fields)
+    const updated = {
+      ...p,
+      name,
+      clientId,
+      currency,
+      leadId,
+      billingType:      bt,
+      tmBudget:         parseFloat(o.querySelector('#lp-tm-budget').value)         || 0,
+      fixedFee:         parseFloat(o.querySelector('#lp-fixed-fee').value)          || 0,
+      retainer:         retainerData,
+      variableRetainer: {
+        ...vr,
+        yearlyBudget: parseFloat(o.querySelector('#lp-vr-yearly-budget').value) || 0,
+        hourlyRate:   parseFloat(o.querySelector('#lp-vr-hourly-rate').value)   || 0,
+      },
+      fixedMilestones: { deposit: msDeposit, midpoint: msMidpoint, midpointTrigger: msTrigger, closeout: msCloseout },
+      startDate:  o.querySelector('#lp-start-date').value  || '',
+      closedDate: o.querySelector('#lp-close-date').value  || '',
+    };
+
+    // Save to localStorage and Supabase
+    saveProjectToTrackr(updated);
+    pushProjectToTrackrSupabase(updated);
+
+    // Also sync name/clientId/dates back to the Grow deal
+    const dealIdx = DB.deals.findIndex(d => d.id === deal.id);
+    if (dealIdx >= 0) {
+      if (updated.name      !== DB.deals[dealIdx].projectName) { DB.deals[dealIdx].projectName = updated.name;       DB.deals[dealIdx].name = updated.name; }
+      if (updated.clientId  !== DB.deals[dealIdx].clientId)    { DB.deals[dealIdx].clientId    = updated.clientId; }
+      // Keep deal dates in sync with proj.startDate / proj.closedDate
+      DB.deals[dealIdx].startDate = updated.startDate  || null;
+      DB.deals[dealIdx].endDate   = updated.closedDate || null;
+      saveDB();
+    }
+
+    o.remove();
+    renderView();
+    toast(`${updated.name} updated in TRACKR ✓`);
+  };
+}
+
+function showIntroducerModal(intr, onSave) {
+  const isEdit = !!intr;
+  const o = showModal(isEdit ? 'Edit Introducer' : 'Add Introducer', `
+    <div class="form-row">
+      <div class="form-group"><label>Name</label><input id="ni-name" value="${intr?.name||''}" placeholder="Full name"></div>
+      <div class="form-group"><label>Company</label><input id="ni-company" value="${intr?.company||''}" placeholder="e.g. Acme Corp"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Email</label><input type="email" id="ni-email" value="${intr?.email||''}" placeholder="james@acme.com"></div>
+      <div class="form-group"><label>Phone</label><input id="ni-phone" value="${intr?.phone||''}" placeholder="+1 555 0100"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group full"><label>Notes</label><input id="ni-notes" value="${intr?.notes||''}" placeholder="How they know you, conference they referred you from…"></div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-primary" id="ni-save">${isEdit ? 'Save Changes' : 'Add Introducer'}</button>
+    </div>
+  `, '520px');
+
+  o.querySelector('#ni-name').focus();
+
+  o.querySelector('#ni-save').onclick = () => {
+    const name = o.querySelector('#ni-name').value.trim();
+    if (!name) { toast('Name is required', 'error'); return; }
+    const data = {
+      id:      intr?.id || genId('intr'),
+      name,
+      company: o.querySelector('#ni-company').value.trim(),
+      email:   o.querySelector('#ni-email').value.trim(),
+      phone:   o.querySelector('#ni-phone').value.trim(),
+      notes:   o.querySelector('#ni-notes').value.trim(),
+    };
+    if (isEdit) {
+      const idx = DB.introducers.findIndex(r => r.id === intr.id);
+      if (idx >= 0) DB.introducers[idx] = data;
+    } else {
+      if (!DB.introducers) DB.introducers = [];
+      DB.introducers.push(data);
+    }
+    saveDB(); o.remove();
+    toast(name + (isEdit ? ' updated ✓' : ' added ✓'));
+    if (onSave) onSave();
+  };
+}
+
+// ════════════════════════════════════════════════════════
+//  CLIENTS LIST
+// ════════════════════════════════════════════════════════
+function renderClientsList(el, acts) {
+  const clients = getClients();
+
+  // Add client button (opens TRACKR's client modal concept inline)
+  const addBtn = document.createElement('button');
+  addBtn.className = 'btn btn-primary btn-sm';
+  addBtn.innerHTML = '+ New Client';
+  addBtn.onclick = () => showNewClientModal(() => renderView());
+  acts.appendChild(addBtn);
+
+  if (!clients.length) {
+    el.innerHTML = `<div style="text-align:center;padding:60px 24px;color:#ADADAB">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#E2E2E2" stroke-width="1.5" style="margin-bottom:12px"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <p style="font-size:14px;margin-bottom:6px">No clients yet.</p>
+      <p style="font-size:14px">Add clients here or manage them in TRACKR.</p>
+    </div>`;
+    return;
+  }
+
+  // Stats
+  const total     = clients.length;
+  const prospects = clients.filter(c => c.classification === 'prospect').length;
+  const active    = total - prospects;
+  el.innerHTML = `
+    <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+      <div class="stat-card">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#898987;margin-bottom:4px">Total</div>
+        <div style="font-size:24px;font-weight:300;color:#2F2F2F">${total}</div>
+      </div>
+      <div class="stat-card">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#898987;margin-bottom:4px">Clients</div>
+        <div style="font-size:24px;font-weight:300;color:#678F2F">${active}</div>
+      </div>
+      <div class="stat-card">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#898987;margin-bottom:4px">Prospects</div>
+        <div style="font-size:24px;font-weight:300;color:#4A7FC1">${prospects}</div>
+      </div>
+    </div>
+    <div style="background:#fff;border:1px solid #E2E2E2;border-radius:6px;overflow:hidden">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="background:#FAFAF9">
+            <th class="th-first">Name</th>
+            <th class="th-std">Lead Contact</th>
+            <th class="th-std">Classification</th>
+            <th class="th-std">Deals</th>
+            <th class="th-std">Pipeline Value</th>
+            <th style="padding:11px 12px;border-bottom:1px solid #E2E2E2"></th>
+          </tr>
+        </thead>
+        <tbody id="clients-list-body"></tbody>
+      </table>
+    </div>`;
+
+  const tbody = el.querySelector('#clients-list-body');
+  clients.forEach(client => {
+    const deals      = DB.deals.filter(d => d.clientId === client.id);
+    const totalVal   = deals.reduce((s, d) => s + (d.value || 0), 0);
+    const isProspect = client.classification === 'prospect';
+    const lead = (client.contacts || []).find(ct => ct.isLead) || (client.contacts || [])[0] || null;
+    const contactCount = (client.contacts || []).length;
+    const tr = document.createElement('tr');
+    tr.style.cssText = 'border-bottom:1px solid #F2F1EE;cursor:pointer;transition:background .08s';
+    tr.innerHTML = `
+      <td style="padding:12px 18px">
+        <div style="font-weight:700;color:#2F2F2F">${client.name}</div>
+        ${client.email ? `<div style="font-size:11px;color:#ADADAB;margin-top:2px">${client.email}</div>` : ''}
+      </td>
+      <td style="padding:12px">
+        ${lead
+          ? `<div style="font-weight:600;font-size:13px;color:#2F2F2F">${lead.name}</div>
+             <div style="font-size:11px;color:#ADADAB;margin-top:1px">${[lead.jobTitle, lead.email].filter(Boolean).join(' · ')}</div>`
+          : `<span style="font-size:14px;color:#ADADAB">No contacts</span>`}
+      </td>
+      <td style="padding:12px">
+        <span class="badge ${isProspect ? 'badge-blue' : 'badge-green'}">${isProspect ? 'Prospect' : 'Client'}</span>
+      </td>
+      <td style="padding:12px;color:#898987">${deals.length}</td>
+      <td style="padding:12px;font-weight:700;color:${totalVal>0?'#678F2F':'#ADADAB'}">${totalVal > 0 ? fmtVal(totalVal) : '—'}</td>
+      <td style="padding:12px;text-align:right">
+        <button class="btn btn-ghost btn-sm cl-edit" data-id="${client.id}" style="font-size:11px">Edit</button>
+      </td>
+    `;
+    tr.addEventListener('click', e => { if (!e.target.closest('.cl-edit')) showNewClientModal(() => renderView(), client); });
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll('.cl-edit').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cl = getClients().find(c => c.id === btn.dataset.id);
+      if (cl) showNewClientModal(() => renderView(), cl);
+    });
+  });
+}
+
+function showNewClientModal(onSave, existing) {
+  const isEdit = !!existing;
+  const c = existing || {};
+  // Work on a deep copy of contacts so edits only commit on save
+  let contacts = JSON.parse(JSON.stringify(c.contacts || []));
+
+  function contactsHTML() {
+    return `
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px" id="nc-contacts-list">
+        ${contacts.length === 0
+          ? `<div style="font-size:14px;color:#ADADAB;padding:10px 0">No contacts yet.</div>`
+          : contacts.map((ct, i) => `
+            <div style="background:#FAFAF9;border:1px solid #E2E2E2;border-radius:5px;padding:11px 13px;position:relative" data-ci="${i}">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  ${ct.isLead
+                    ? `<span class="badge badge-green" style="font-size:10px">Lead</span>`
+                    : `<button class="btn btn-ghost btn-sm nc-set-lead" data-ci="${i}" style="font-size:10px;padding:2px 8px;color:#898987">Set as Lead</button>`}
+                  <span style="font-size:13px;font-weight:700">${ct.name||'Unnamed'}</span>
+                  ${ct.jobTitle ? `<span style="font-size:11px;color:#898987">${ct.jobTitle}</span>` : ''}
+                </div>
+                <button class="nc-del-contact btn btn-ghost btn-sm" data-ci="${i}" style="color:#C0392B;padding:3px 8px;font-size:13px">×</button>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 14px">
+                <input class="nc-ct-name" data-ci="${i}" value="${ct.name||''}" placeholder="Full Name" class="input-sm">
+                <input class="nc-ct-title" data-ci="${i}" value="${ct.jobTitle||''}" placeholder="Job Title" class="input-sm">
+                <input class="nc-ct-email" data-ci="${i}" type="email" value="${ct.email||''}" placeholder="email@company.com" class="input-sm">
+                <input class="nc-ct-phone" data-ci="${i}" value="${ct.phone||''}" placeholder="Phone" class="input-sm">
+                <input class="nc-ct-linkedin" data-ci="${i}" value="${ct.linkedin||''}" placeholder="LinkedIn URL" style="font-size:14px;padding:6px 9px;border:1px solid #E2E2E2;border-radius:3px;font-family:inherit;grid-column:1/-1">
+              </div>
+            </div>`).join('')}
+      </div>
+      <button class="btn btn-ghost btn-sm" id="nc-add-contact" style="margin-bottom:4px">+ Add Contact</button>
+    `;
+  }
+
+  function syncContactsFromForm() {
+    o.querySelectorAll('[data-ci]').forEach(inp => {
+      const i = parseInt(inp.dataset.ci);
+      if (!contacts[i]) return;
+      if (inp.classList.contains('nc-ct-name'))     contacts[i].name     = inp.value.trim();
+      if (inp.classList.contains('nc-ct-title'))    contacts[i].jobTitle = inp.value.trim();
+      if (inp.classList.contains('nc-ct-email'))    contacts[i].email    = inp.value.trim();
+      if (inp.classList.contains('nc-ct-phone'))    contacts[i].phone    = inp.value.trim();
+      if (inp.classList.contains('nc-ct-linkedin')) contacts[i].linkedin = inp.value.trim();
+    });
+  }
+
+  function rewireContacts() {
+    syncContactsFromForm();
+    o.querySelector('#nc-contacts-wrap').innerHTML = contactsHTML();
+    bindContactEvents();
+  }
+
+  function bindContactEvents() {
+    o.querySelector('#nc-add-contact')?.addEventListener('click', () => {
+      syncContactsFromForm();
+      const isFirst = contacts.length === 0;
+      contacts.push({ id: genId('ct'), name:'', jobTitle:'', email:'', phone:'', linkedin:'', isLead: isFirst });
+      rewireContacts();
+    });
+    o.querySelectorAll('.nc-del-contact').forEach(btn => {
+      btn.addEventListener('click', () => {
+        syncContactsFromForm();
+        const i = parseInt(btn.dataset.ci);
+        const wasLead = contacts[i]?.isLead;
+        contacts.splice(i, 1);
+        // Reassign lead to first if deleted lead
+        if (wasLead && contacts.length > 0) contacts[0].isLead = true;
+        rewireContacts();
+      });
+    });
+    o.querySelectorAll('.nc-set-lead').forEach(btn => {
+      btn.addEventListener('click', () => {
+        syncContactsFromForm();
+        const i = parseInt(btn.dataset.ci);
+        contacts.forEach((ct, idx) => { ct.isLead = idx === i; });
+        rewireContacts();
+      });
+    });
+  }
+
+  const o = showModal(isEdit ? `${c.name}` : 'New Client', `
+    <div class="section-divider">Company</div>
+    <div class="form-row">
+      <div class="form-group"><label>Name</label><input id="nc-name" value="${c.name||''}" placeholder="e.g. Acme Corp" style="font-size:13px"></div>
+      <div class="form-group">
+        <label>Classification</label>
+        <select id="nc-class">
+          <option value="client" ${(c.classification||'client')==='client'?'selected':''}>Client</option>
+          <option value="prospect" ${c.classification==='prospect'?'selected':''}>Prospect</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>General Email</label><input type="email" id="nc-email" value="${c.email||''}" placeholder="info@company.com"></div>
+      <div class="form-group"><label>General Phone</label><input id="nc-phone" value="${c.phone||''}" placeholder="+1 555 0100"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group full"><label>Notes</label><textarea id="nc-notes">${c.notes||''}</textarea></div>
+    </div>
+    <div class="section-divider">Contacts</div>
+    <div id="nc-contacts-wrap">${contactsHTML()}</div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-primary" id="nc-save">${isEdit ? 'Update' : 'Add Client'}</button>
+    </div>
+  `, '640px');
+
+  bindContactEvents();
+
+  o.querySelector('#nc-save').onclick = () => {
+    syncContactsFromForm();
+    const name = o.querySelector('#nc-name').value.trim();
+    if (!name) { toast('Name required', 'error'); return; }
+    const client = {
+      ...(c || {}),
+      id:             c.id || genId('cl'),
+      name,
+      classification: o.querySelector('#nc-class').value,
+      email:          o.querySelector('#nc-email').value.trim(),
+      phone:          o.querySelector('#nc-phone').value.trim(),
+      notes:          o.querySelector('#nc-notes').value.trim(),
+      contacts:       contacts.filter(ct => ct.name),
+      currency:       c.currency || DB.settings.currency || 'USD',
+      billingModel:   c.billingModel || 'standard',
+      rateCard:       c.rateCard || {},
+      logo:           c.logo || '',
+      createdAt:      c.createdAt || new Date().toISOString().slice(0,10),
+    };
+    saveClientToTrackr(client);
+    o.remove();
+    if (onSave) onSave();
+    toast(isEdit ? `${name} updated ✓` : `${name} added ✓`);
+  };
+}
+
+// ════════════════════════════════════════════════════════
+//  SETTINGS
+// ════════════════════════════════════════════════════════
+function renderSettings(el, acts) {
+  renderPipelineSettings(el);
+
+  // Append the data export card after pipeline settings
+  const exportCard = document.createElement('div');
+  exportCard.className = 'card mb-20';
+  exportCard.innerHTML = `
+    <div class="card-title" style="margin-bottom:4px">Data Export</div>
+    <div style="font-size:13px;color:#898987;margin-bottom:16px">Export all Grow data as JSON — deals, pipeline columns, introducers and settings.</div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" id="export-json-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="margin-right:5px;vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export JSON
+      </button>
+      <span style="font-size:14px;color:#ADADAB" id="export-json-info"></span>
+    </div>
+  `;
+
+  exportCard.querySelector('#export-json-btn').addEventListener('click', () => {
+    const exportData = {
+      exportedAt: new Date().toISOString(),
+      version: 'grow-v1',
+      deals: (DB.deals || []).map(d => ({
+        id:           d.id,
+        name:         d.name,
+        projectName:  d.projectName,
+        clientId:     d.clientId,
+        stage:        d.stage,
+        value:        d.value,
+        currency:     d.currency,
+        probability:  d.probability,
+        teamLead:     d.teamLead,
+        introducerId: d.introducerId,
+        notes:        d.notes,
+        wonAt:        d.wonAt,
+        createdAt:    d.createdAt,
+        csmProjectId: d.csmProjectId,
+        introduction: d.introduction,
+      })),
+      columns:    DB.columns    || [],
+      introducers: DB.introducers || [],
+      health:     DB.health     || {},
+      settings:   DB.settings   || {},
+    };
+
+    const json     = JSON.stringify(exportData, null, 2);
+    const blob     = new Blob([json], { type: 'application/json' });
+    const url      = URL.createObjectURL(blob);
+    const a        = document.createElement('a');
+    const dateStr  = new Date().toISOString().slice(0, 10);
+    a.href         = url;
+    a.download     = `grow-export-${dateStr}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    const info = exportCard.querySelector('#export-json-info');
+    info.textContent = `✓ Exported ${exportData.deals.length} deals`;
+    setTimeout(() => { info.textContent = ''; }, 3000);
+  });
+
+  el.appendChild(exportCard);
+}
+
+function renderPipelineSettings(el) {
+  const customCols = DB.columns.filter(c => !c.fixed).sort((a,b) => a.order - b.order);
+  el.innerHTML = `
+    <div class="card mb-20">
+      <div class="card-title" style="margin-bottom:4px">Pipeline Columns</div>
+      <div style="font-size:13px;color:#898987;margin-bottom:16px">Configure the stages in your pipeline. Closed Won and Closed Lost are always present at the end.</div>
+      <div style="padding:10px 14px;background:#F7F9FF;border:1px solid #D0E4FF;border-radius:4px;font-size:14px;color:#4A7FC1;margin-bottom:16px">
+        <strong style="color:#2F2F2F">Team members</strong> are shared from <strong>TRACKR</strong> — manage them there. Currency and Supabase settings are shared from <strong>PAY</strong>.
+      </div>
+      <div id="col-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
+        ${customCols.map(c => {
+          const dealCount = DB.deals.filter(d => d.stage === c.id).length;
+          const canDelete = dealCount === 0;
+          return `
+          <div style="display:flex;gap:8px;align-items:center" data-cid="${c.id}">
+            <div style="width:4px;height:32px;border-radius:2px;background:${c.color};flex-shrink:0"></div>
+            <input class="col-name-inp" data-cid="${c.id}" value="${c.name}" style="flex:1;font-size:13px;padding:7px 10px">
+            <input type="color" class="col-color-inp" data-cid="${c.id}" value="${c.color}" style="width:36px;height:36px;padding:3px;border:1px solid #E2E2E2;border-radius:3px;cursor:pointer">
+            ${canDelete
+              ? `<button class="btn btn-ghost btn-sm col-del" data-cid="${c.id}" style="color:#C0392B;padding:6px 10px" title="Delete column">×</button>`
+              : `<span style="font-size:11px;color:#ADADAB;white-space:nowrap;padding:0 6px" title="${dealCount} deal${dealCount!==1?'s':''} — move them first to delete">${dealCount} deal${dealCount!==1?'s':''}</span>`
+            }
+          </div>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:20px">
+        <button class="btn btn-ghost btn-sm" id="col-add">+ Add Column</button>
+        <button class="btn btn-primary btn-sm" id="col-save">Save Columns</button>
+      </div>
+      <div style="padding:10px 14px;background:#F7F9FF;border-radius:4px;border-left:3px solid #4A7FC1;font-size:14px;color:#898987">
+        <strong style="color:#2F2F2F">Fixed columns:</strong> Closed Won and Closed Lost always appear at the end and cannot be removed.
+      </div>
+    </div>
+  `;
+
+  el.querySelector('#col-add').addEventListener('click', () => {
+    const list = el.querySelector('#col-list');
+    const id = genId('col');
+    const div = document.createElement('div');
+    div.style.cssText = 'display:flex;gap:8px;align-items:center';
+    div.dataset.cid = id;
+    div.innerHTML = `
+      <div style="width:4px;height:32px;border-radius:2px;background:#4A7FC1;flex-shrink:0"></div>
+      <input class="col-name-inp" data-cid="${id}" value="New Stage" style="flex:1;font-size:13px;padding:7px 10px">
+      <input type="color" class="col-color-inp" data-cid="${id}" value="#4A7FC1" style="width:36px;height:36px;padding:3px;border:1px solid #E2E2E2;border-radius:3px;cursor:pointer">
+      <button class="btn btn-ghost btn-sm col-del" data-cid="${id}" style="color:#C0392B;padding:6px 10px">×</button>
+    `;
+    list.appendChild(div);
+    wireColSettings(el);
+  });
+
+  el.querySelector('#col-save').addEventListener('click', () => {
+    const rows = el.querySelectorAll('#col-list > [data-cid]');
+    const newCols = [];
+    rows.forEach((row, i) => {
+      const cid = row.dataset.cid;
+      newCols.push({
+        id:    cid,
+        name:  row.querySelector('.col-name-inp').value.trim() || 'Stage',
+        color: row.querySelector('.col-color-inp').value,
+        order: i,
+      });
+    });
+    // Keep fixed cols
+    const fixed = DB.columns.filter(c => c.fixed).map((c,i) => ({ ...c, order: newCols.length + i }));
+    DB.columns = [...newCols, ...fixed];
+    saveDB(); renderView(); toast('Columns saved ✓');
+  });
+
+  wireColSettings(el);
+}
+
+function wireColSettings(el) {
+  el.querySelectorAll('.col-del').forEach(btn => {
+    btn.addEventListener('click', () => {
+      // Use parentElement — btn.closest('[data-cid]') would match the button itself
+      // since the button also carries data-cid
+      btn.parentElement.remove();
+    });
+  });
+  el.querySelectorAll('.col-color-inp').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const swatch = inp.closest('[data-cid]').querySelector('div[style*="background"]');
+      if (swatch) swatch.style.background = inp.value;
+    });
+  });
+}
+
+// ── Boot ──────────────────────────────────────────────
+loadDB();
+// Sync team members from TRACKR's mis-v1 on every boot
+function getTrackrTeam() {
+  try {
+    const r = localStorage.getItem('mis-v1');
+    if (!r) return [];
+    return (JSON.parse(r).teamMembers || []).filter(m => !m.archived);
+  } catch { return []; }
+}
+
+// Render sidebar user footer — resolves real name from TRACKR session first
+function renderCSMUser() {
+  // Append directly to .sidebar — mirrors TRACKR pattern exactly
+  const existing = document.getElementById('csm-user-pill');
+  if (existing) existing.remove();
+  let username = 'User', role = '';
+  try {
+    // Always try TRACKR session first — it has the real display name
+    const trackrDB  = JSON.parse(localStorage.getItem('mis-v1') || '{}');
+    const trackrSes = JSON.parse(sessionStorage.getItem('mis-session-v1') || localStorage.getItem('mis-session-v1') || 'null');
+    if (trackrSes?.memberId) {
+      const member = (trackrDB.teamMembers || []).find(m => m.id === trackrSes.memberId);
+      if (member?.name) {
+        username = member.nickname || member.name;
+        role     = { admin: 'Admin', team_manager: 'Manager', member: 'Member' }[member.role] || member.role || '';
+      }
+    }
+    // Fall back to PAY session username only if no TRACKR member found
+    if (username === 'User') {
+      const paySess = JSON.parse(sessionStorage.getItem('mis-pay-session') || 'null');
+      if (paySess && paySess.expires > Date.now() && paySess.username !== 'admin') {
+        username = paySess.username;
+        role = paySess.role === 'admin' ? 'Admin' : 'User';
+      }
+    }
+  } catch {}
+  const initials = username.split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase() || 'CS';
+  const area = document.createElement('div');
+  area.className = 'sidebar-user';
+  area.id = 'csm-user-pill';
+  area.title = 'Sign out';
+  area.innerHTML = `
+    <div class="avatar-sm" style="flex-shrink:0">${initials}</div>
+    <div class="sidebar-user-info" style="flex:1;min-width:0">
+      <div class="sidebar-user-name">${username}</div>
+      ${role ? `<div class="sidebar-user-role">${role}</div>` : ''}
+    </div>
+    <button title="Log out" style="flex-shrink:0;background:none;border:none;cursor:pointer;padding:4px;border-radius:4px;color:rgba(255,255,255,0.35);transition:color .12s;display:flex;align-items:center" onmouseover="this.style.color='rgba(255,255,255,0.8)'" onmouseout="this.style.color='rgba(255,255,255,0.35)'">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+    </button>`;
+  document.querySelector('.sidebar').appendChild(area);
+  area.addEventListener('click', () => {
+    sessionStorage.removeItem('mis-pay-session');
+    sessionStorage.removeItem('mis-session-v1');
+    localStorage.removeItem('mis-session-v1');
+    window.location.href = 'trackr.html';
+  });
+}
+
+// Migration: seed Closed Won column with any TRACKR clients that don't have a CSM deal yet
+// First: purge old client-seeded Won deals (no csmProjectId, no reverse project link)
+(function purgeClientSeededWonDeals() {
+  const wonCol = DB.columns.find(c => c.won);
+  if (!wonCol) return;
+  const projects = getTrackrProjects();
+  const projectDealIds = new Set(projects.map(p => p.csmDealId).filter(Boolean));
+  const before = DB.deals.length;
+  DB.deals = DB.deals.filter(d => {
+    if (d.stage !== wonCol.id) return true;          // not in Won — keep
+    if (d.csmProjectId) return true;                 // has forward project link — keep
+    if (projectDealIds.has(d.id)) return true;       // has reverse project link — keep
+    return false;                                     // client-seeded legacy deal — remove
+  });
+  if (DB.deals.length !== before) saveDB();
+})();
+// Remove any duplicate Won deals sharing the same csmProjectId (race condition cleanup)
+(function deduplicateWonDeals() {
+  const wonCol = DB.columns.find(c => c.won);
+  if (!wonCol) return;
+  const seenProjId  = new Set();
+  const seenNameKey = new Set();
+  const before = DB.deals.length;
+  DB.deals = DB.deals.filter(d => {
+    if (d.stage !== wonCol.id) return true; // not in Won — keep
+    // Deduplicate by csmProjectId (primary key)
+    if (d.csmProjectId) {
+      if (seenProjId.has(d.csmProjectId)) return false;
+      seenProjId.add(d.csmProjectId);
+    }
+    // Deduplicate by projectName+clientId fallback (for legacy deals without csmProjectId)
+    const nameKey = (d.projectName||d.name||'') + '|' + (d.clientId||'');
+    if (nameKey !== '|') {
+      if (seenNameKey.has(nameKey)) return false;
+      seenNameKey.add(nameKey);
+    }
+    return true;
+  });
+  if (DB.deals.length !== before) saveDB();
+})();
+
+document.querySelectorAll('.nav-item').forEach(n => {
+  n.addEventListener('click', () => navigate(n.dataset.view));
+});
+
+// Cross-tab sync: when TRACKR writes to mis-v1, re-render views that use client/project data
+window.addEventListener('storage', e => {
+  if (e.key !== 'mis-v1') return;
+  const projects = getTrackrProjects();
+  let changed = false;
+
+  // Seed new projects and sync name/value changes on existing ones
+  const wonCol = DB.columns.find(c => c.won);
+  if (wonCol) {
+    projects.forEach(proj => {
+      // Find existing deal linked to this project
+      const existingDeal = DB.deals.find(d =>
+        d.csmProjectId === proj.id || proj.csmDealId === d.id
+      );
+
+      if (existingDeal) {
+        // Sync fields that may have been updated in TRACKR
+        let dealChanged = false;
+        if (proj.name && existingDeal.projectName !== proj.name) {
+          existingDeal.projectName = proj.name;
+          existingDeal.name        = proj.name;
+          dealChanged = true;
+        }
+        if (proj.clientId && existingDeal.clientId !== proj.clientId) {
+          existingDeal.clientId = proj.clientId;
+          dealChanged = true;
+        }
+        if (existingDeal.csmProjectId !== proj.id) {
+          existingDeal.csmProjectId = proj.id;
+          dealChanged = true;
+        }
+        if (dealChanged) changed = true;
+      } else {
+        // New project — seed a Won deal for it
+        DB.deals.push({
+          id:           genId('deal'),
+          csmProjectId: proj.id,
+          clientId:     proj.clientId || null,
+          projectName:  proj.name,
+          name:         proj.name,
+          value:        proj.fixedFee || proj.retainer?.monthlyFee || 0,
+          currency:     proj.currency || DB.settings.currency || 'USD',
+          stage:        wonCol.id,
+          teamLead:     proj.leadId || null,
+          techLead:     null,
+          notes:        '',
+          createdAt:    proj.startDate || new Date().toISOString().slice(0,10),
+          wonAt:        proj.startDate || new Date().toISOString().slice(0,10),
+        });
+        changed = true;
+      }
+    });
+  }
+
+  if (changed) saveDB();
+  if (['clients', 'pipeline', 'health'].includes(currentView)) renderView();
+});
+
+// Boot: pull from Supabase if configured, then render
+(async () => {
+  const pulled = await growSupaPull();
+  // Always seed/cleanup after boot — whether we pulled from Supabase or not.
+  // Running seed only inside `if (pulled)` caused duplicates: sync boot seeds first,
+  // then pull overwrites DB.deals with older cloud data, then purgeAndSeed seeds again.
+  {
+    (function purgeAndSeed() {
+      const wonCol = DB.columns?.find(c => c.won);
+      if (!wonCol) return;
+      const projects = getTrackrProjects();
+      const projectDealIds = new Set(projects.map(p => p.csmDealId).filter(Boolean));
+      const before = DB.deals.length;
+      // Remove legacy client-seeded Won deals with no project link
+      DB.deals = DB.deals.filter(d => {
+        if (d.stage !== wonCol.id) return true;
+        if (d.csmProjectId) return true;
+        if (projectDealIds.has(d.id)) return true;
+        return false;
+      });
+      let changed = DB.deals.length !== before;
+      projects.forEach(proj => {
+        const existingDeal = DB.deals.find(d => d.csmProjectId === proj.id || proj.csmDealId === d.id);
+        if (existingDeal) {
+          // Sync name/client from TRACKR in case they were updated there
+          if (proj.name && existingDeal.projectName !== proj.name) {
+            existingDeal.projectName = proj.name;
+            existingDeal.name        = proj.name;
+            changed = true;
+          }
+          if (proj.clientId && existingDeal.clientId !== proj.clientId) {
+            existingDeal.clientId = proj.clientId;
+            changed = true;
+          }
+          if (existingDeal.csmProjectId !== proj.id) {
+            existingDeal.csmProjectId = proj.id;
+            changed = true;
+          }
+        } else {
+          // New project — seed a Won deal
+          DB.deals.push({ id:genId('deal'), csmProjectId:proj.id, clientId:proj.clientId||null, projectName:proj.name, name:proj.name, value:proj.fixedFee||proj.retainer?.monthlyFee||0, currency:proj.currency||DB.settings.currency||'USD', stage:wonCol.id, teamLead:proj.leadId||null, techLead:null, notes:'', createdAt:proj.startDate||new Date().toISOString().slice(0,10), wonAt:proj.startDate||new Date().toISOString().slice(0,10) });
+          changed = true;
+        }
+      });
+      if (changed) saveDB();
+    })();
+  } // end seed block
+  renderCSMUser();
+
+  (function checkGrowAccess() {
+    try {
+      const trackrSess = JSON.parse(sessionStorage.getItem('mis-session-v1') || localStorage.getItem('mis-session-v1') || 'null');
+      if (trackrSess?.memberId || trackrSess?.loggedIn) {
+        // TRACKR user — check role permission
+        const trackrDB = JSON.parse(localStorage.getItem('mis-v1') || '{}');
+        const member = (trackrDB.teamMembers || []).find(m => m.id === trackrSess.memberId);
+        if (member) {
+          const role = member.role || 'member';
+          const perms = (trackrDB.rolePermissions || {})[role] || [];
+          if (role !== 'admin' && !perms.includes('access_grow')) {
+            showGrowBlocked();
+            return;
+          }
+        }
+        return; // admin or has permission
+      }
+      // PAY-only user — check growAccess flag
+      const paySess = JSON.parse(sessionStorage.getItem('mis-pay-session') || 'null');
+      if (!paySess || paySess.expires <= Date.now()) return;
+      if (paySess.role === 'admin') return;
+      const payDB = JSON.parse(localStorage.getItem('payroll-v1') || '{}');
+      const payUser = (payDB.settings?.payUsers || []).find(u => u.username === paySess.username);
+      if (!payUser || !payUser.growAccess) { showGrowBlocked(); return; }
+    } catch(_) {}
+
+    function showGrowBlocked() {
+      document.getElementById('main-content').innerHTML = '';
+      document.querySelector('.main').innerHTML =
+        '<div style="flex:1;display:flex;align-items:center;justify-content:center;background:#F2F1EE">'
+        + '<div style="text-align:center;padding:40px">'
+        + '<div style="font-size:48px;margin-bottom:16px">🔒</div>'
+        + '<div style="font-size:22px;font-weight:700;color:#2F2F2F;margin-bottom:8px">Access Restricted</div>'
+        + '<div style="font-size:14px;color:#898987;max-width:320px;line-height:1.6;margin-bottom:24px">Your account doesn\'t have permission to access Grow. Contact your administrator.</div>'
+        + '<a href="trackr.html" style="display:inline-block;padding:10px 20px;background:#678F2F;color:#fff;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600">← Back to Sign In</a>'
+        + '</div></div>';
+    }
+  })();
+
+  renderView();
+  setTimeout(initGrowRealtime, 1000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Logs / temp
+*.log
+*.tmp
+.cache/
+
+# Local backups exported from the apps
+*-backup-*.json
+mis-studio-backup-*.json
+grow-export-*.json
+
+# Environment / secrets
+.env
+.env.local
+.env.*
+secrets.json
+credentials.json
+
+# Local data caches
+*.cache
+localStorage-export-*.json
