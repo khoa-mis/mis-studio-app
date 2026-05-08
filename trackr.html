@@ -813,7 +813,7 @@ function loadDB() {
       } catch(_) {}
       delete DB.supabase; // remove from DB blob
     }
-    if (!DB.account.googleClientId) DB.account.googleClientId = '';
+    if (!DB.account.googleClientId) DB.account.googleClientId = '__GOOGLE_CLIENT_ID__';
     // allowedDomain intentionally blank until admin sets it
     if (!DB.notifications) DB.notifications = [];
     if (!Array.isArray(DB.teamMembers)) DB.teamMembers = [];
@@ -13020,8 +13020,6 @@ function showAdminSetupScreen() {
   screen.querySelector('#admin-name').addEventListener('keydown', e => { if (e.key === 'Enter') screen.querySelector('#admin-email').focus(); });
   screen.querySelector('#admin-back-link').addEventListener('click', (e) => {
     e.preventDefault();
-    DB.account.googleClientId = '';
-    saveDB();
     screen.remove();
     showLoginScreen();
   });
@@ -13048,68 +13046,46 @@ function showLoginScreen() {
   screen.id = 'login-screen';
   screen.className = 'login-screen';
 
-  if (!clientId) {
-    // No Google Client ID configured yet — show first-run setup
+  if (!allowedDomain) {
+    // No allowed domain configured yet — ask admin to set it
     screen.innerHTML = `
       <div class="login-card">
         <div class="login-logo"><svg xmlns="http://www.w3.org/2000/svg" width="110" height="88" viewBox="0 0 397 319" style="display:block"><g transform="translate(1)"><text transform="translate(334 248)" fill="var(--text)" font-size="233" font-family="Manrope,sans-serif" letter-spacing="0.088em"><tspan x="-61.162" y="0">s</tspan></text><text transform="translate(101 249)" fill="var(--text)" font-size="234" font-family="Manrope,sans-serif" font-weight="500" letter-spacing="0.088em"><tspan x="-101.205" y="0">m</tspan></text><rect width="20" height="126" transform="translate(230 124)" fill="var(--text)"/><rect width="20" height="22" transform="translate(230 78)" fill="var(--text)"/></g></svg></div>
         <div class="login-title">Hi there 👋</div>
-        <div class="login-sub">Let's get you set up. You'll need a Google OAuth Client ID to connect your team's Google accounts.</div>
-        <div class="login-field">
-          <label>Google OAuth Client ID</label>
-          <input type="text" id="setup-client-id" placeholder="xxxxxxxxxxxx.apps.googleusercontent.com" value="345574249379-0v3urhnlvcrq7cgr8om3po7j3lf1s0vn.apps.googleusercontent.com">
-          <div style="font-size:14px;color:var(--text-3);margin-top:6px">
-            Get yours at <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:var(--accent)">Google Cloud Console</a>. Add this file's URL as an authorised JavaScript origin.
-          </div>
-        </div>
+        <div class="login-sub">Set the allowed email domain for your team. Only Google accounts from this domain can sign in.</div>
         <div class="login-field">
           <label>Allowed Domain</label>
           <input type="text" id="setup-domain" placeholder="mis.studio" value="${allowedDomain}">
-          <div style="font-size:14px;color:var(--text-3);margin-top:6px">Only Google accounts from this domain can sign in.</div>
+          <div style="font-size:14px;color:var(--text-3);margin-top:6px">e.g. mis.studio — only @mis.studio accounts will be permitted.</div>
         </div>
         <button class="login-btn" id="setup-save-btn">Save & Continue</button>
         <div class="login-error" id="setup-error"></div>
       </div>
     `;
     screen.querySelector('#setup-save-btn').addEventListener('click', () => {
-      const cid = screen.querySelector('#setup-client-id').value.trim();
       const domain = screen.querySelector('#setup-domain').value.trim().toLowerCase();
       const err = screen.querySelector('#setup-error');
-      if (!cid || !cid.includes('.apps.googleusercontent.com')) {
-        err.textContent = 'Please enter a valid Google Client ID (ends in .apps.googleusercontent.com)';
-        err.classList.add('show'); return;
-      }
       if (!domain) { err.textContent = 'Please enter an allowed domain (e.g. mis.studio)'; err.classList.add('show'); return; }
-      DB.account.googleClientId = cid;
       DB.account.allowedDomain = domain;
       saveDB();
       screen.remove();
       showAdminSetupScreen();
     });
-    screen.querySelector('#setup-client-id').addEventListener('keydown', e => { if (e.key === 'Enter') screen.querySelector('#setup-save-btn').click(); });
+    screen.querySelector('#setup-domain').addEventListener('keydown', e => { if (e.key === 'Enter') screen.querySelector('#setup-save-btn').click(); });
   } else {
     // Normal Google SSO login
     screen.innerHTML = `
       <div class="login-card">
         <div class="login-logo"><svg xmlns="http://www.w3.org/2000/svg" width="110" height="88" viewBox="0 0 397 319" style="display:block"><g transform="translate(1)"><text transform="translate(334 248)" fill="var(--text)" font-size="233" font-family="Manrope,sans-serif" letter-spacing="0.088em"><tspan x="-61.162" y="0">s</tspan></text><text transform="translate(101 249)" fill="var(--text)" font-size="234" font-family="Manrope,sans-serif" font-weight="500" letter-spacing="0.088em"><tspan x="-101.205" y="0">m</tspan></text><rect width="20" height="126" transform="translate(230 124)" fill="var(--text)"/><rect width="20" height="22" transform="translate(230 78)" fill="var(--text)"/></g></svg></div>
         <div class="login-title">Good to see you 👋</div>
-        <div class="login-sub">${allowedDomain ? `Sign in with your <strong>@${allowedDomain}</strong> Google account.` : 'Sign in with your Google account.'}</div>
+        <div class="login-sub">Sign in with your <strong>@${allowedDomain}</strong> Google account.</div>
         <div id="g-signin-btn" style="margin:20px 0 8px;display:flex;justify-content:center;min-height:44px"></div>
         <div class="login-error" id="login-error" style="margin-top:12px"></div>
-        <div style="text-align:center;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
-          <a id="reconfigure-link" href="#" style="font-size:14px;color:var(--text-3);text-decoration:none">⚙ Change Google configuration</a>
-        </div>
       </div>
     `;
     // Append to DOM FIRST so getElementById can find #g-signin-btn
     document.body.appendChild(screen);
     initGoogleSignIn(clientId, allowedDomain);
-    screen.querySelector('#reconfigure-link').addEventListener('click', (e) => {
-      e.preventDefault();
-      DB.account.googleClientId = '';
-      saveDB();
-      showLoginScreen();
-    });
     return; // skip the appendChild below
   }
 
@@ -13277,15 +13253,9 @@ function renderAccount(el, acts) {
 
         <div class="section-title mb-16">Google Sign-In</div>
         <div class="card mb-16">
-          <div class="card-title">Google OAuth Configuration</div>
+          <div class="card-title">Allowed Domain</div>
           <div style="font-size:13px;color:var(--text-2);margin:10px 0 16px">
-            Team members sign in using their Google account. Get a Client ID from
-            <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:var(--accent)">Google Cloud Console</a>.
-            Add this app's URL as an authorised JavaScript origin.
-          </div>
-          <div class="form-group" style="margin-bottom:12px">
-            <label>Google OAuth Client ID</label>
-            <input type="text" id="google-client-id" value="${DB.account?.googleClientId||''}" placeholder="xxxxxxxxxxxx.apps.googleusercontent.com">
+            Only Google accounts from this domain can sign in. The Google Client ID is configured by the system administrator.
           </div>
           <div class="form-group" style="margin-bottom:16px">
             <label>Allowed Domain</label>
@@ -13533,19 +13503,14 @@ function renderAccount(el, acts) {
     toast('Workspace name saved ✨');
   });
 
-  // Save Google config
+  // Save allowed domain
   el.querySelector('#save-google-btn')?.addEventListener('click', () => {
-    const clientId = el.querySelector('#google-client-id').value.trim();
     const domain = el.querySelector('#allowed-domain').value.trim().toLowerCase();
     const status = el.querySelector('#google-status');
-    if (clientId && !clientId.includes('.apps.googleusercontent.com')) {
-      status.innerHTML = '<span style="color:var(--danger)">Client ID should end with .apps.googleusercontent.com</span>'; return;
-    }
-    DB.account.googleClientId = clientId;
     DB.account.allowedDomain = domain;
     saveDB();
-    status.innerHTML = '<span style="color:var(--accent)">✓ Saved — team members will use this to sign in</span>';
-    toast('Google Sign-In configured 🔑');
+    status.innerHTML = '<span style="color:var(--accent)">✓ Saved</span>';
+    toast('Allowed domain updated 🔑');
   });
 
 }
