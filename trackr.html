@@ -1757,10 +1757,10 @@ function fmtFileSize(bytes) {
 
 // ── SUPABASE SYNC ──
 
-// Hardcoded fallback — survives any cache/localStorage clear
+// Env-injected fallback — populated by Cloudflare Pages build step
 const _SUPA_FALLBACK = {
-  url: 'https://zdbknsexwavcknvwqbeg.supabase.co',
-  anonKey: '',
+  url: '__SUPABASE_URL__',
+  anonKey: '__SUPABASE_ANON_KEY__',
   workspaceId: 'default'
 };
 
@@ -1772,9 +1772,12 @@ function supaCfg() {
       if (cfg.url && cfg.anonKey) return cfg;
     }
   } catch { /* fall through */ }
-  // Always fall back to hardcoded credentials — restore to localStorage
-  localStorage.setItem(SUPA_KEY, JSON.stringify(_SUPA_FALLBACK));
-  return _SUPA_FALLBACK;
+  // Env fallback — only use if both url and key are provided
+  if (_SUPA_FALLBACK.url && _SUPA_FALLBACK.anonKey) {
+    localStorage.setItem(SUPA_KEY, JSON.stringify(_SUPA_FALLBACK));
+    return _SUPA_FALLBACK;
+  }
+  return null;
 }
 
 function saveSupa(cfg) {

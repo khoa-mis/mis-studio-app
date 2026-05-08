@@ -6456,8 +6456,8 @@ let   _paySyncTimer    = null;
 let   _paySupabaseReady = false; // must be true before any push is allowed
 
 const _PAY_SUPA_FALLBACK = {
-  url: 'https://zdbknsexwavcknvwqbeg.supabase.co',
-  anonKey: ''
+  url: '__SUPABASE_URL__',
+  anonKey: '__SUPABASE_ANON_KEY__'
 };
 
 // Boot
@@ -6582,8 +6582,12 @@ function paySupaCfg() {
     const r = JSON.parse(localStorage.getItem(SUPA_CFG_KEY) || 'null');
     if (r && r.url && r.anonKey) return r;
   } catch(e) { /* fall through */ }
-  localStorage.setItem(SUPA_CFG_KEY, JSON.stringify(_PAY_SUPA_FALLBACK));
-  return _PAY_SUPA_FALLBACK;
+  // Env fallback — only use if both url and key are provided
+  if (_PAY_SUPA_FALLBACK.url && _PAY_SUPA_FALLBACK.anonKey) {
+    localStorage.setItem(SUPA_CFG_KEY, JSON.stringify(_PAY_SUPA_FALLBACK));
+    return _PAY_SUPA_FALLBACK;
+  }
+  return null;
 }
 
 // Upload a PDF (base64 string, no prefix) to Supabase Storage

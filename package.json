@@ -1,0 +1,8 @@
+{
+  "name": "mis-studio-app",
+  "version": "1.0.0",
+  "description": "mis.studio internal apps — Trackr, Pay, Grow",
+  "scripts": {
+    "build": "node build.js"
+  }
+}

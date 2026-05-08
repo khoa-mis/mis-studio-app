@@ -195,11 +195,21 @@ const GROW_ROW_ID   = 'grow-default';    // row in mis_workspaces
 const GROW_SAVED_AT = 'grow-local-saved-at';
 
 // Reuse the shared mis-supa-config (same Supabase instance as TRACKR/PAY)
+const _GROW_SUPA_FALLBACK = {
+  url: '__SUPABASE_URL__',
+  anonKey: '__SUPABASE_ANON_KEY__'
+};
+
 function growSupaCfg() {
   try {
     const r = JSON.parse(localStorage.getItem('mis-supa-config') || 'null');
     if (r && r.url && r.anonKey) return r;
   } catch(_) {}
+  // Env fallback — only use if both url and key are provided
+  if (_GROW_SUPA_FALLBACK.url && _GROW_SUPA_FALLBACK.anonKey) {
+    localStorage.setItem('mis-supa-config', JSON.stringify(_GROW_SUPA_FALLBACK));
+    return _GROW_SUPA_FALLBACK;
+  }
   return null;
 }
 
