@@ -31,3 +31,6 @@ localStorage-export-*.json
 # Build output
 dist/
 node_modules/
+
+# Archives / zips
+*.zip

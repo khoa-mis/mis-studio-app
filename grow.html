@@ -74,8 +74,6 @@
 
 .health-card-header{padding:14px 16px;display:flex;align-items:flex-start;justify-content:space-between;border-bottom:1px solid var(--bg)}
 
-.health-card-
-
 .health-month-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
 
 .rag-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
@@ -93,11 +91,7 @@
 
 .month-pill{padding:6px 12px;border-radius:100px;font-size:14px;font-weight:700;cursor:pointer;border:1.5px solid var(--border);background:#fff;white-space:nowrap;transition:all .1s}
 
-.month-pill
-
 .health-score-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
-
-.score-
 
 .score-dots{display:flex;gap:5px}
 
@@ -180,6 +174,12 @@
   <div class="topbar">
     <div id="topbar-title"><span style="color:var(--border);font-weight:300;margin-right:10px;letter-spacing:0">//</span>Grow</div>
     <div class="topbar-actions" id="topbar-actions"></div>
+    <button id="page-chat-btn" title="Ask & Act" style="display:none;align-items:center;gap:7px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 12px;cursor:pointer;color:var(--text-2);font-family:var(--font);font-size:13px;font-weight:600;transition:all 0.15s;flex-shrink:0;margin-left:8px"
+      onmouseover="this.style.background='var(--border)';this.style.color='var(--text)'"
+      onmouseout="this.style.background='var(--bg)';this.style.color='var(--text-2)'">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span>Ask &amp; Act</span>
+    </button>
   </div>
   <div class="content" id="main-content"></div>
 </div>
@@ -273,7 +273,11 @@ async function growSupaPull() {
       return false;
     }
     DB = { ...DB, ...rows[0].data };
-    localStorage.setItem(KEY, JSON.stringify(DB));
+    // Strip any legacy deals payload — under the unified schema, DB.deals is
+    // derived from mis-v1.projects, never persisted in csm-v1.
+    delete DB.deals;
+    syncDealsFromProjects();
+    localStorage.setItem(KEY, JSON.stringify({ ...DB, deals: undefined }));
     localStorage.setItem(GROW_SAVED_AT, rows[0].updated_at); // keep local ts in sync with remote
     _growLastRemoteTs = rows[0].updated_at;
     _growSupabaseReady = true;
@@ -288,18 +292,20 @@ async function growSupaPush() {
   const cfg = growSupaCfg();
   if (!cfg) return;
   if (!_growSupabaseReady) { scheduleGrowPush(); return; }
-  if (!DB.deals && !DB.columns) return;
+  if (!DB.columns) return;
   _growLastPushAt = Date.now();
   const pushedAt  = new Date().toISOString();
+  // Strip the derived deals array from the pushed payload — it lives in
+  // mis-v1.projects, not csm-v1.
+  const payload = { ...DB };
+  delete payload.deals;
   try {
     await growSupaFetch('/mis_workspaces', {
       method: 'POST',
       prefer: 'resolution=merge-duplicates,return=minimal',
-      body: JSON.stringify({ id: GROW_ROW_ID, data: DB, updated_at: pushedAt }),
+      body: JSON.stringify({ id: GROW_ROW_ID, data: payload, updated_at: pushedAt }),
     });
     _growLastRemoteTs = pushedAt;
-    // Only update GROW_SAVED_AT if we haven't saved anything newer since the push started.
-    // If the user saved more data while the push was in flight, their newer timestamp wins.
     const currentSaved = localStorage.getItem(GROW_SAVED_AT) || '0';
     if (pushedAt >= currentSaved) localStorage.setItem(GROW_SAVED_AT, pushedAt);
   } catch(_) {}
@@ -332,24 +338,135 @@ function initGrowRealtime() {
   _growPollTimer = setInterval(_growPollChanges, 8000);
 }
 let DB = {}, currentView = 'pipeline';
+// When set, renderClientsList shows the org-chart canvas for that client
+// instead of the regular table. Cleared when the user clicks "← Back to Clients".
+let _orgChartClientId = null;
+
+// One-time migration that runs from Grow if the user opens this app before
+// opening TRACKR after a unified-schema upgrade. Mirrors the migration block
+// in trackr.html — translates csm-v1.deals into mis-v1.projects records and
+// gates with DB.settings.unifiedSchemaMigratedAt so it only runs once.
+//
+// NOTE: Mirrors the migration in trackr.html's loadDB(). The flag is set in
+// mis-v1 so both apps see it and only one runs. If you change this, mirror
+// it in trackr.html.
+function maybeRunUnifiedSchemaMigrationFromGrow() {
+  let mis;
+  try { mis = JSON.parse(localStorage.getItem('mis-v1') || 'null') || {}; }
+  catch { return; }
+  if (!mis.settings) mis.settings = {};
+  if (mis.settings.unifiedSchemaMigratedAt) return;
+
+  let csm = null;
+  try { csm = JSON.parse(localStorage.getItem('csm-v1') || 'null'); } catch(_) {}
+  if (!csm || !Array.isArray(csm.deals) || csm.deals.length === 0) {
+    // Nothing to migrate — still stamp the flag so we don't probe every load
+    mis.settings.unifiedSchemaMigratedAt = new Date().toISOString();
+    localStorage.setItem('mis-v1', JSON.stringify(mis));
+    return;
+  }
+
+  if (!Array.isArray(mis.projects)) mis.projects = [];
+  const cols = csm.columns || [];
+  const colTypeById = {};
+  cols.forEach(col => {
+    if (col.won)       colTypeById[col.id] = 'won';
+    else if (col.lost) colTypeById[col.id] = 'lost';
+    else               colTypeById[col.id] = 'pipeline';
+  });
+  const projById = new Map(mis.projects.map(p => [p.id, p]));
+  const dealToProjectId = {};
+  const today = new Date().toISOString().slice(0, 10);
+
+  csm.deals.forEach(d => {
+    const stageType = colTypeById[d.stage] || 'pipeline';
+    if (d.csmProjectId && projById.has(d.csmProjectId)) {
+      const proj = projById.get(d.csmProjectId);
+      proj.csmDealId            = d.id;
+      proj.pipelineStageId      = d.stage || null;
+      proj.pipelineStageName    = (cols.find(c => c.id === d.stage)?.name) || null;
+      if (proj.pipelineProbability == null) proj.pipelineProbability  = 0;
+      if (proj.pipelineValue       == null) proj.pipelineValue        = d.value || 0;
+      if (proj.introducerId === undefined) proj.introducerId = d.introducerId || null;
+      if (!proj.introduction)              proj.introduction = d.introduction || { commission: 0 };
+      if (proj.preSalesLead === undefined) proj.preSalesLead = d.preSalesLead || null;
+      if (proj.techLead     === undefined) proj.techLead     = d.techLead     || null;
+      if (proj.pipelineNotes === undefined) proj.pipelineNotes = d.notes || '';
+      if (!proj.wonAt && d.wonAt) proj.wonAt = d.wonAt;
+      if (proj.status === undefined) proj.status = stageType === 'lost' ? 'lost' : 'active';
+      dealToProjectId[d.id] = proj.id;
+      return;
+    }
+    const newProj = {
+      id:                  d.csmProjectId || ('pr-' + d.id),
+      csmDealId:           d.id,
+      name:                d.projectName || d.name || '(unnamed)',
+      clientId:            d.clientId || null,
+      currency:            d.currency || mis.settings?.defaultCurrency || 'USD',
+      leadId:              d.teamLead || '',
+      members:             [],
+      files:               [],
+      billingType:         d.billingType || 'time_materials',
+      fixedFee:            0,
+      retainer:            { hoursIncluded:0, monthlyFee:0, overageEnabled:false, overageRate:0, billingDay:1 },
+      variableRetainer:    { yearlyBudget:0, hourlyRate:0, approvals:{} },
+      changeOrders:        [],
+      expenses:            [],
+      startDate:           d.startDate || '',
+      closedDate:          d.endDate || '',
+      status:              stageType === 'lost' ? 'lost' : (stageType === 'won' ? 'active' : 'pipeline'),
+      atRisk:              false,
+      pipelineStageId:     d.stage || null,
+      pipelineStageName:   (cols.find(c => c.id === d.stage)?.name) || null,
+      pipelineProbability: 0,
+      pipelineValue:       d.value || 0,
+      introducerId:        d.introducerId || null,
+      introduction:        d.introduction || { commission: 0 },
+      preSalesLead:        d.preSalesLead || null,
+      techLead:             d.techLead || null,
+      pipelineNotes:        d.notes || '',
+      wonAt:                d.wonAt || null,
+      createdAt:            d.createdAt || today,
+    };
+    mis.projects.push(newProj);
+    dealToProjectId[d.id] = newProj.id;
+  });
+
+  // Rewrite synthetic pipeline-{dealId} time entry projectIds
+  if (Array.isArray(mis.timeEntries)) {
+    mis.timeEntries.forEach(e => {
+      if (typeof e.projectId !== 'string' || !e.projectId.startsWith('pipeline-')) return;
+      const dealId = e.projectId.slice('pipeline-'.length);
+      const newId = dealToProjectId[dealId];
+      if (newId) { e.projectId = newId; e.nonBillable = true; }
+    });
+  }
+
+  mis.settings.unifiedSchemaMigratedAt = new Date().toISOString();
+  try {
+    localStorage.setItem('mis-v1', JSON.stringify(mis));
+    window.dispatchEvent(new StorageEvent('storage', { key: 'mis-v1', newValue: JSON.stringify(mis) }));
+  } catch(_) {}
+}
 
 // ── Persistence ───────────────────────────────────────
 function loadDB() {
   try { DB = JSON.parse(localStorage.getItem(KEY) || 'null') || {}; } catch { DB = {}; }
   if (!DB.columns)  DB.columns  = defaultColumns();
-  if (!DB.deals)    DB.deals    = [];
+  // DB.deals is no longer persisted in csm-v1 — it's derived from mis-v1.projects
+  // on every load (see dealsFromProjects below). Pipeline projects, lost projects,
+  // and Won projects (with a known stage) all surface as "deals" in this app.
+  // We keep an empty array around so existing code that does DB.deals.push/etc
+  // still works; mutations are intercepted via dealCommit/dealRemove.
+  DB.deals = [];
   if (!DB.health)   DB.health   = {};
   // Migration: remove the accidental Pre-Sales Lead pipeline column if present
   if (DB.columns.find(c => c.id === 'presales')) {
-    // Move any deals stuck in that column to 'lead'
-    DB.deals.forEach(d => { if (d.stage === 'presales') d.stage = 'lead'; });
     DB.columns = DB.columns.filter(c => c.id !== 'presales');
-    // Re-order remaining custom columns
     DB.columns.filter(c => !c.fixed).sort((a,b)=>a.order-b.order).forEach((c,i)=>c.order=i);
     saveDB();
   }
   if (!DB.settings) {
-    // Default currency from TRACKR's settings (single source of truth)
     let defaultCurr = 'USD';
     try {
       const t = JSON.parse(localStorage.getItem('mis-v1') || 'null');
@@ -358,32 +475,223 @@ function loadDB() {
     DB.settings = { currency: defaultCurr };
   }
   if (!DB.introducers)  DB.introducers  = [];
-  // Migrate: pull existing inline introduction data up to introducers table (one-time)
-  (function migrateIntroductions() {
-    let changed = false;
-    DB.deals.forEach(d => {
-      const intro = d.introduction;
-      if (!intro?.name || d.introducerId) return; // already migrated or no intro
-      // Find or create introducer record
-      let existing = DB.introducers.find(r =>
-        r.name.toLowerCase() === intro.name.toLowerCase() &&
-        (!intro.email || r.email === intro.email)
-      );
-      if (!existing) {
-        existing = { id: genId('intr'), name: intro.name, company: intro.company||'',
-                     email: intro.email||'', phone: intro.phone||'', notes: intro.notes||'' };
-        DB.introducers.push(existing);
-      }
-      d.introducerId = existing.id;
-      // Keep commission on the deal, remove the contact fields
-      d.introduction = { commission: intro.commission || 0 };
-      changed = true;
-    });
-    if (changed) saveDB();
-  })();
+  // Drop any legacy csm-v1.deals payload — the unified schema (gated by
+  // mis-v1.settings.unifiedSchemaMigratedAt) has already copied them into
+  // mis-v1.projects, or will when the migration below runs.
+  if (Array.isArray(DB._legacyDeals)) delete DB._legacyDeals;
+  // Run the unified migration if it hasn't been done yet (e.g. user opens
+  // Grow before TRACKR after the upgrade). Idempotent — gated by the flag.
+  maybeRunUnifiedSchemaMigrationFromGrow();
+  // Hydrate DB.deals from mis-v1.projects
+  syncDealsFromProjects();
 }
+
+// Derive the in-memory DB.deals array from mis-v1.projects. Pipeline projects,
+// lost projects, and active projects with a pipelineStageId all appear as deals
+// (the pipeline board needs Won projects to render the Closed Won column).
+function syncDealsFromProjects() {
+  try {
+    const mis = JSON.parse(localStorage.getItem('mis-v1') || 'null');
+    const projects = mis?.projects || [];
+    const wonStage = (DB.columns || []).find(c => c.won);
+    const lostStage = (DB.columns || []).find(c => c.lost);
+    DB.deals = projects
+      .filter(p => p.status === 'pipeline'
+                || p.status === 'lost'
+                || (p.status === 'active' && p.pipelineStageId)
+                || p.csmDealId)
+      .map(p => projectToDeal(p, wonStage, lostStage));
+  } catch(_) { DB.deals = []; }
+}
+
+// Translate a TRACKR project into the legacy "deal" shape Grow's UI expects.
+// We keep csmProjectId pointing at the project itself so existing code that
+// uses it for linkage keeps working.
+function projectToDeal(p, wonStage, lostStage) {
+  // Resolve which Grow column this project belongs to. Pipeline records
+  // already have pipelineStageId set; active records (Won) default to the
+  // workspace's Won column; lost records to the Lost column. If the legacy
+  // record is missing pipelineStageId for some reason we fall back to the
+  // status-implied column so it still appears somewhere sensible.
+  let stage = p.pipelineStageId;
+  if (!stage) {
+    if (p.status === 'active' && wonStage)  stage = wonStage.id;
+    else if (p.status === 'lost' && lostStage) stage = lostStage.id;
+  }
+  return {
+    id:           p.id, // unified: deal.id === project.id
+    csmProjectId: p.id,
+    csmDealId:    p.csmDealId || null,
+    clientId:     p.clientId || null,
+    projectName:  p.name || '',
+    name:         p.name || '',
+    value:        p.pipelineValue || 0,
+    currency:     p.currency || DB.settings?.currency || 'USD',
+    billingType:  p.billingType || 'fixed',
+    stage,
+    preSalesLead: p.preSalesLead || null,
+    teamLead:     p.leadId || null,
+    techLead:     p.techLead || null,
+    notes:        p.pipelineNotes || '',
+    introducerId: p.introducerId || null,
+    introduction: p.introduction || { commission: 0 },
+    startDate:    p.startDate || null,
+    endDate:      p.closedDate || null,
+    createdAt:    p.createdAt || null,
+    wonAt:        p.wonAt || null,
+    _projectStatus: p.status || 'active',
+  };
+}
+
+// Translate a deal-shaped object to a project record. Used when writing.
+// Merges over the existing project so we don't drop fields Grow doesn't touch.
+function dealToProjectShape(deal, existing, opts) {
+  opts = opts || {};
+  const wonStage  = (DB.columns || []).find(c => c.won);
+  const lostStage = (DB.columns || []).find(c => c.lost);
+  const stageType =
+    deal.stage === wonStage?.id  ? 'won'  :
+    deal.stage === lostStage?.id ? 'lost' : 'pipeline';
+  const status =
+    stageType === 'won'  ? 'active' :
+    stageType === 'lost' ? 'lost'   : 'pipeline';
+  const today = new Date().toISOString().slice(0,10);
+  const base = existing || {
+    id:               deal.id,
+    name:             '',
+    clientId:         null,
+    currency:         DB.settings?.currency || 'USD',
+    leadId:           '',
+    members:          [],
+    files:            [],
+    billingType:      'time_materials',
+    fixedFee:         0,
+    retainer:         { hoursIncluded:0, monthlyFee:0, overageEnabled:false, overageRate:0, billingDay:1 },
+    variableRetainer: { yearlyBudget:0, hourlyRate:0, approvals:{} },
+    changeOrders:     [],
+    expenses:         [],
+    startDate:        '',
+    closedDate:       '',
+    status:           'active',
+    atRisk:           false,
+  };
+  const merged = {
+    ...base,
+    id:                  deal.id,
+    name:                deal.projectName || deal.name || base.name || '',
+    clientId:            deal.clientId || base.clientId || null,
+    currency:            deal.currency || base.currency,
+    billingType:         deal.billingType || base.billingType || 'fixed',
+    leadId:              deal.teamLead || base.leadId || '',
+    startDate:           deal.startDate || base.startDate || '',
+    closedDate:          deal.endDate   || base.closedDate || '',
+    status,
+    pipelineStageId:     deal.stage,
+    pipelineStageName:   (DB.columns.find(c => c.id === deal.stage)?.name) || deal.stage || null,
+    pipelineProbability: base.pipelineProbability || 0,
+    pipelineValue:       parseFloat(deal.value) || 0,
+    introducerId:        deal.introducerId || null,
+    introduction:        deal.introduction || { commission: 0 },
+    preSalesLead:        deal.preSalesLead || null,
+    techLead:            deal.techLead || null,
+    pipelineNotes:       deal.notes || '',
+    csmDealId:           deal.csmDealId || base.csmDealId || null,
+    createdAt:           base.createdAt || deal.createdAt || today,
+    // wonAt rules:
+    //   - Won transition: stamp today (preserve any existing wonAt if already set)
+    //   - Moved out of Won: deal.wonAt is explicitly null → clear the record
+    //   - Otherwise: preserve whatever was on base
+    wonAt:               stageType === 'won'
+                            ? (base.wonAt || today)
+                            : (deal.wonAt === null ? null : (base.wonAt || null)),
+  };
+  // Contract terms — only write through if the deal payload carried them
+  // (the deal modal does; drag/drop and other internal callers don't, so
+  // those preserve whatever was on the existing project record).
+  if (deal.contractFixedFee !== undefined) {
+    merged.fixedFee = deal.contractFixedFee;
+  }
+  if (deal.contractRetainer) {
+    merged.retainer = {
+      ...(base.retainer || { overageEnabled:false, overageRate:0 }),
+      monthlyFee:    deal.contractRetainer.monthlyFee || 0,
+      hoursIncluded: deal.contractRetainer.hoursIncluded || 0,
+      billingDay:    deal.contractRetainer.billingDay || 1,
+    };
+  }
+  if (deal.contractVariableRetainer) {
+    merged.variableRetainer = {
+      ...(base.variableRetainer || { approvals: {} }),
+      yearlyBudget: deal.contractVariableRetainer.yearlyBudget || 0,
+      hourlyRate:   deal.contractVariableRetainer.hourlyRate || 0,
+    };
+  }
+  return merged;
+}
+
+// Write a deal back to mis-v1.projects (creating or updating). Also refreshes
+// DB.deals so the UI is in sync immediately.
+function dealCommit(deal) {
+  try {
+    const raw = localStorage.getItem('mis-v1');
+    const mis = raw ? JSON.parse(raw) : {};
+    if (!Array.isArray(mis.projects)) mis.projects = [];
+    const existing = mis.projects.find(p => p.id === deal.id) || null;
+    const next = dealToProjectShape(deal, existing);
+    const idx = mis.projects.findIndex(p => p.id === deal.id);
+    if (idx >= 0) mis.projects[idx] = next;
+    else mis.projects.push(next);
+    localStorage.setItem('mis-v1', JSON.stringify(mis));
+    window.dispatchEvent(new StorageEvent('storage', { key: 'mis-v1', newValue: JSON.stringify(mis) }));
+    // Also push to Supabase so a TRACKR instance that's not currently open picks it up
+    if (typeof pushProjectToTrackrSupabase === 'function') pushProjectToTrackrSupabase(next);
+    syncDealsFromProjects();
+    return next;
+  } catch(e) { console.warn('dealCommit failed', e); return null; }
+}
+
+// Remove a deal from mis-v1.projects entirely (only for pipeline/lost — Won
+// projects must be deleted from TRACKR proper to keep history consistent).
+function dealRemove(dealId) {
+  try {
+    const raw = localStorage.getItem('mis-v1');
+    const mis = raw ? JSON.parse(raw) : {};
+    if (!Array.isArray(mis.projects)) return;
+    mis.projects = mis.projects.filter(p => p.id !== dealId);
+    localStorage.setItem('mis-v1', JSON.stringify(mis));
+    window.dispatchEvent(new StorageEvent('storage', { key: 'mis-v1', newValue: JSON.stringify(mis) }));
+    if (typeof deleteProjectFromTrackrSupabase === 'function') deleteProjectFromTrackrSupabase(dealId);
+    syncDealsFromProjects();
+  } catch(e) { console.warn('dealRemove failed', e); }
+}
+
+// Inspect what a Won → non-Won transition would leave behind. Returns a
+// summary object the caller uses to decide whether to confirm with the user.
+// Hours and invoices logged while a project was Won don't get deleted on
+// transition out of Won, but they semantically lose meaning — entryBillable
+// returns 0 for pipeline projects, and invoices stop rolling up as active
+// project revenue. Showing the impact lets the user decide.
+function getUnWonImpact(dealId) {
+  let hourCount = 0, invoiceCount = 0, totalHours = 0;
+  try {
+    const mis = JSON.parse(localStorage.getItem('mis-v1') || '{}');
+    (mis.timeEntries || []).forEach(e => {
+      if (e.projectId === dealId) { hourCount++; totalHours += parseFloat(e.hours) || 0; }
+    });
+    (mis.invoices || []).forEach(i => { if (i.projectId === dealId) invoiceCount++; });
+  } catch(_) {}
+  return { hourCount, invoiceCount, totalHours };
+}
+
 function saveDB() {
-  try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch(_) {}
+  // Note: DB.deals is derived from mis-v1.projects and not persisted here.
+  // We write a copy of DB without the deals array to avoid carrying duplicate
+  // data forward and confusing future loads.
+  try {
+    const persisted = { ...DB };
+    delete persisted.deals;
+    localStorage.setItem(KEY, JSON.stringify(persisted));
+  } catch(_) {}
   localStorage.setItem(GROW_SAVED_AT, new Date().toISOString());
   scheduleGrowPush();
 }
@@ -413,6 +721,34 @@ function getClients() {
     if (!r) return [];
     return JSON.parse(r).clients || [];
   } catch { return []; }
+}
+
+// Returns clients suitable for Grow's pickers — excludes archived (TRACKR's
+// archive_client tool flag) and closed (TRACKR's status='closed' lifecycle
+// state). Prospects ARE included because Grow is the pre-sales tool — that's
+// where prospects belong. The selected `currentId` (when editing an existing
+// deal) is always kept visible so we don't drop the linkage if the underlying
+// client was closed/archived after the deal was created.
+function getPickerClients(currentId = '') {
+  return getClients().filter(c =>
+    c.id === currentId || (
+      !c.archived &&
+      (c.status || 'active') !== 'closed'
+    )
+  );
+}
+
+// Build client <option> strings for a Grow picker. Adds a "(Prospect)" tag
+// for prospects, and "(Closed)" / "(Archived)" tags when an existing deal
+// references a client that has since been retired (so the user knows why
+// the option looks unusual but the linkage still resolves).
+function buildClientOptions(currentId = '') {
+  return getPickerClients(currentId).map(c => {
+    const tag = c.archived ? ' (Archived)'
+              : (c.status === 'closed' ? ' (Closed)'
+              : (c.classification === 'prospect' ? ' (Prospect)' : ''));
+    return `<option value="${c.id}" ${c.id === currentId ? 'selected' : ''}>${c.name}${tag}</option>`;
+  }).join('');
 }
 
 // Read all projects from TRACKR's mis-v1
@@ -446,7 +782,29 @@ function saveClientToTrackr(client) {
     localStorage.setItem('mis-v1', JSON.stringify(data));
     // Fire storage event so TRACKR (same or other tab) picks up the change and pushes to Supabase
     window.dispatchEvent(new StorageEvent('storage', { key: 'mis-v1', newValue: JSON.stringify(data) }));
+    // Also push directly to TRACKR's Supabase row so other devices see the
+    // client even if no TRACKR tab is open. Without this, a new client
+    // created from Grow only lives in this browser's localStorage until
+    // TRACKR is opened, breaking sync for users on other devices.
+    if (typeof pushClientToTrackrSupabase === 'function') pushClientToTrackrSupabase(client);
   } catch(e) { }
+}
+
+// Push an updated client directly to TRACKR's Supabase workspace row.
+// Mirrors pushProjectToTrackrSupabase so cross-device sync works without
+// requiring a TRACKR tab to be open somewhere.
+async function pushClientToTrackrSupabase(client) {
+  const cfg = growSupaCfg();
+  if (!cfg) return;
+  const workspaceId = cfg.workspaceId || 'default';
+  try {
+    await _trackrCrossRowWrite(workspaceId, (trackrData) => {
+      if (!Array.isArray(trackrData.clients)) trackrData.clients = [];
+      const idx = trackrData.clients.findIndex(c => c.id === client.id);
+      if (idx >= 0) trackrData.clients[idx] = client;
+      else trackrData.clients.push(client);
+    });
+  } catch(_) {} // silently ignore — localStorage is already updated
 }
 
 // Save a new project into TRACKR's mis-v1.projects (triggers cross-tab storage event)
@@ -545,44 +903,47 @@ function saveProjectToTrackr(project) {
 
 // Check if a project already exists in TRACKR for this deal
 function getTrackrProjectForDeal(dealId) {
+  // Under the unified schema, dealId === projectId — they're the same record.
   try {
-    const deal    = DB.deals.find(d => d.id === dealId);
-    const mis     = JSON.parse(localStorage.getItem('mis-v1') || '{}');
+    const mis      = JSON.parse(localStorage.getItem('mis-v1') || '{}');
     const projects = mis.projects || [];
-    // 1. Forward link: deal.csmProjectId → project.id (seeded deals)
-    // 2. Reverse link: project.csmDealId → dealId (converted deals)
-    const byLink = projects.find(p =>
-      (deal?.csmProjectId && p.id === deal.csmProjectId) ||
-      p.csmDealId === dealId
-    );
-    if (byLink) return byLink;
-    // 3. Fallback: match by project name + clientId (handles legacy deals missing link IDs)
-    if (deal?.projectName && deal?.clientId) {
-      return projects.find(p => p.name === deal.projectName && p.clientId === deal.clientId) || null;
-    }
-    return null;
+    return projects.find(p => p.id === dealId) || null;
   } catch { return null; }
 }
 
 // Compute the canonical value + currency for a deal.
 // For Won deals linked to a TRACKR project, use the live project budget.
 function resolveDealValue(deal) {
-  if (deal.csmProjectId) {
-    const proj = getTrackrProjects().find(p => p.id === deal.csmProjectId);
-    if (proj) {
-      const bt = proj.billingType || 'time_materials';
-      const coSum = (proj.changeOrders || [])
-        .filter(co => co.status !== 'rejected')
-        .reduce((s, co) => s + (co.value || 0), 0);
-      let val = 0;
-      if (bt === 'fixed')             val = (proj.fixedFee || 0) + coSum;
-      else if (bt === 'retainer')     val = proj.retainer?.monthlyFee || 0;
-      else if (bt === 'variable_retainer') val = proj.variableRetainer?.yearlyBudget || 0;
-      // time_materials: no fixed total, show 0
-      const curr = proj.currency || deal.currency || DB.settings.currency || 'USD';
+  // Under the unified schema deal.id IS the project id. For Won deals
+  // (status === 'active'), pull the contracted value from the project record
+  // including change orders. For pipeline/lost deals, return the pipeline
+  // estimate stored on the same record.
+  const proj = getTrackrProjects().find(p => p.id === deal.id);
+  if (proj && proj.status === 'active') {
+    const bt = proj.billingType || 'time_materials';
+    const coSum = (proj.changeOrders || [])
+      .filter(co => co.status !== 'rejected')
+      .reduce((s, co) => s + (co.value || 0), 0);
+    let contractVal = 0;
+    if (bt === 'fixed')                  contractVal = (proj.fixedFee || 0);
+    else if (bt === 'retainer')          contractVal = (proj.retainer?.monthlyFee || 0);
+    else if (bt === 'variable_retainer') contractVal = (proj.variableRetainer?.yearlyBudget || 0);
+    // contractVal stays 0 for 'time_materials' — no inherent contract figure
+    const curr = proj.currency || deal.currency || DB.settings.currency || 'USD';
+    if (contractVal > 0) {
       const label = bt === 'retainer' ? '/mo' : bt === 'variable_retainer' ? '/yr' : '';
-      return { value: val, currency: curr, label };
+      return { value: contractVal + coSum, currency: curr, label };
     }
+    // Fallback: the project is Won but its contract field is empty (T&M
+    // projects, or a project that was Won before the fee was filled in).
+    // Use the pipeline value originally agreed at the deal stage so the
+    // introducer view, kanban totals, and commission calcs still reflect
+    // the budget the deal was sold on. Label "estimate" so it's visible
+    // this isn't a contracted figure.
+    if (proj.pipelineValue && proj.pipelineValue > 0) {
+      return { value: proj.pipelineValue + coSum, currency: curr, label: bt === 'time_materials' ? 'budget' : 'estimate' };
+    }
+    return { value: coSum, currency: curr, label: '' };
   }
   return { value: deal.value || 0, currency: deal.currency || DB.settings.currency || 'USD', label: '' };
 }
@@ -667,6 +1028,8 @@ function renderView() {
     else if (currentView === 'introducers') renderIntroducers(el, acts);
     else if (currentView === 'settings')    renderSettings(el, acts);
   }
+  // Show/hide the Ask & Act topbar button based on view + role
+  if (typeof updatePageChatButton === 'function') updatePageChatButton();
 }
 
 // ════════════════════════════════════════════════════════
@@ -702,17 +1065,17 @@ function renderPipeline(el, acts) {
   el.appendChild(wrap);
 
   sortedCols.forEach(col => {
-    const trackrProjectIds = new Set(getTrackrProjects().map(p => p.id));
-    // Remove Won deals with no linked TRACKR project — they're orphans
-    if (col.won) {
-      const before = DB.deals.length;
-      DB.deals = DB.deals.filter(d => d.stage !== col.id || (d.csmProjectId && trackrProjectIds.has(d.csmProjectId)));
-      if (DB.deals.length < before) saveDB();
-    }
-    const colDeals = DB.deals.filter(d => {
-        if (d.stage !== col.id) return false;
-        return true;
-      })
+    // NOTE: a previous version of this code silently deleted Won-stage deals
+    // whose `csmProjectId` didn't resolve to a current TRACKR project. That
+    // ran on every render and caused two bugs:
+    //   1. Edit a deal → 200ms race window where the deal is in Won but its
+    //      auto-created project hasn't been written yet → cleanup deletes it.
+    //   2. If a TRACKR project was deleted/closed, the linked Grow deal would
+    //      vanish silently with no warning.
+    // Removed entirely — orphan deals stay visible so the user can review and
+    // decide. If we need to surface them later we can add a badge or a
+    // "Reconcile" button rather than deleting data.
+    const colDeals = DB.deals.filter(d => d.stage === col.id)
       .sort((a, b) => {
         // Closed Won: alphabetical by project name
         if (col.won) return getDealName(a).localeCompare(getDealName(b));
@@ -805,21 +1168,52 @@ function buildDealCard(deal, col) {
     </div>
   `;
 
-  // Drag events
+  // Drag + click handling — coexisting nicely is harder than it looks.
+  // When an element is draggable=true, browsers can interpret even tiny
+  // mouse movements as the start of a drag, which suppresses normal click
+  // and mouseup events. We handle BOTH cases:
+  //   1. A real click (no drag triggered) → 'click' event fires normally
+  //   2. A tiny drag that never moved (dragstart→dragend with no real travel)
+  //      → 'click' may be swallowed by the browser, so we detect the failed
+  //        drag in the 'dragend' handler and open the modal there.
+  // _dragHandledByDragend prevents both paths firing the modal twice when
+  // the browser dispatches both dragend AND click for the same gesture.
+  let _dragStartX = 0, _dragStartY = 0, _dragStartTime = 0;
+  let _dragHandledByDragend = false;
   card.addEventListener('dragstart', e => {
     _dragId = deal.id;
+    _dragStartX = e.clientX;
+    _dragStartY = e.clientY;
+    _dragStartTime = Date.now();
+    _dragHandledByDragend = false;
     card.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
   });
-  card.addEventListener('dragend', () => {
+  card.addEventListener('dragend', e => {
+    const dx = Math.abs(e.clientX - _dragStartX);
+    const dy = Math.abs(e.clientY - _dragStartY);
+    const dt = Date.now() - _dragStartTime;
+    const didNotTravel = dx < 5 && dy < 5 && dt < 500;
     _dragId = null;
     card.classList.remove('dragging');
     document.querySelectorAll('.drag-placeholder').forEach(p => p.remove());
     document.querySelectorAll('.drag-over').forEach(c => c.classList.remove('drag-over'));
+    // Browser treated this as a failed drag and may have swallowed the click.
+    // Open the modal manually and flag so the click handler below skips.
+    if (didNotTravel && !e.target?.closest?.('.deal-proj-btn')) {
+      _dragHandledByDragend = true;
+      showDealModal(deal);
+      // Reset the flag on the next tick so a follow-up real click works.
+      setTimeout(() => { _dragHandledByDragend = false; }, 0);
+    }
   });
 
-  // Click to edit deal
-  card.addEventListener('click', () => showDealModal(deal));
+  // Real click path — fires when the browser didn't enter drag mode at all.
+  card.addEventListener('click', e => {
+    if (_dragHandledByDragend) return;
+    if (e.target.closest('.deal-proj-btn')) return;
+    showDealModal(deal);
+  });
 
   // Project settings button — only on Won deals with a linked project
   if (col?.won && deal.csmProjectId) {
@@ -870,76 +1264,70 @@ function wireDropZone(colEl, colId) {
     const col       = DB.columns.find(c => c.id === colId);
     const prevCol   = DB.columns.find(c => c.id === prevStage);
 
-    // Moving INTO Closed Won → re-open linked project or auto-create if none exists
-    if (col?.won && prevStage !== colId) {
-      deal.stage = colId;
-      if (!deal.wonAt) deal.wonAt = new Date().toISOString().slice(0,10);
-      saveDB();
-
-      // If a linked project exists, clear its closedDate so it reappears in TRACKR.
-      // Read from localStorage (includes projects that may have been closed but not deleted).
-      const allProjects = (() => { try { return JSON.parse(localStorage.getItem('mis-v1')||'{}').projects || []; } catch(_){return [];} })();
-      const existingProj = deal.csmProjectId
-        ? allProjects.find(p => p.id === deal.csmProjectId)
-        : allProjects.find(p => p.csmDealId === deal.id);
-
-      if (existingProj) {
-        existingProj.closedDate = '';
-        saveProjectToTrackr(existingProj);
-        pushProjectToTrackrSupabase(existingProj);
-        renderView();
-        // Open the project settings modal so user can configure billing type, budget, dates etc.
-        showLinkedProjectModal(deal);
-      } else {
-        // New project — create it first, then open the project modal once the ID is set
-        renderView();
-        autoCreateProjectForDeal(deal);
-        // Wait a tick for autoCreate to finish writing csmProjectId, then open the modal
-        setTimeout(() => {
-          const freshDeal = DB.deals.find(d => d.id === deal.id);
-          if (freshDeal?.csmProjectId) showLinkedProjectModal(freshDeal);
-        }, 400);
-      }
-      return;
-    }
-
-    // Moving OUT of Closed Won → check if linked project has hours
+    // Moving OUT of Closed Won — sanity-check against losing data. Hours and
+    // invoices that were billable while the project was Won become non-billable
+    // (or orphaned) once status flips to pipeline/lost. Confirm with the user
+    // rather than silently re-classifying their work.
     if (prevCol?.won && !col?.won && prevStage !== colId) {
-      const proj = deal.csmProjectId
-        ? getTrackrProjects().find(p => p.id === deal.csmProjectId)
-        : null;
-
-      if (proj) {
-        // Check for logged time entries against this project
-        try {
-          const mis = JSON.parse(localStorage.getItem('mis-v1') || '{}');
-          const hasHours = (mis.timeEntries || []).some(e => e.projectId === proj.id);
-          if (hasHours) {
-            toast('Cannot move — this project has logged hours in TRACKR', 'error');
-            renderView(); // reset drag visual
-            return;
+      const { hourCount, invoiceCount, totalHours } = getUnWonImpact(deal.id);
+      if (hourCount > 0 || invoiceCount > 0) {
+        // Snap card back visually until the user confirms — renderView will
+        // re-render from canonical state (which still has the deal in Won).
+        renderView();
+        const targetName = col?.name || 'that column';
+        const parts = [];
+        if (hourCount > 0)    parts.push(`<strong>${totalHours.toFixed(1)}h logged</strong> across ${hourCount} entr${hourCount===1?'y':'ies'}`);
+        if (invoiceCount > 0) parts.push(`<strong>${invoiceCount} invoice${invoiceCount===1?'':'s'}</strong>`);
+        const consequences = [];
+        if (hourCount > 0)    consequences.push('Logged hours stay in TRACKR but become non-billable (pre-sales hours are 0-rated).');
+        if (invoiceCount > 0) consequences.push('Invoices remain in TRACKR but no longer roll up under an active project — they show as orphan billings.');
+        confirmModal(
+          `Move out of Closed Won?`,
+          `<strong>${getDealName(deal)}</strong> has ${parts.join(' and ')} attached.<br><br>
+           Moving it to <strong>${targetName}</strong> will:<br>
+           ${consequences.map(c => '• ' + c).join('<br>')}<br><br>
+           This is reversible — drag the deal back to Closed Won to restore active status.`,
+          'Move it anyway',
+          () => {
+            // Re-apply the stage change after confirmation
+            deal.stage = colId;
+            deal.wonAt = null; // moved out of Won
+            dealCommit(deal);
+            saveDB();
+            renderView();
+            toast(`Moved to ${col?.name || colId}`);
           }
-        } catch(_) {}
-
-        // Clear the deal link FIRST so storage event callbacks don't find a stale link
-        deal.csmProjectId = null;
-        // Remove the project from TRACKR entirely (localStorage + Supabase)
-        deleteProjectFromTrackr(proj.id);
-        deleteProjectFromTrackrSupabase(proj.id);
+        );
+        return;
       }
-
-      deal.stage = colId;
-      deal.wonAt = null; // clear so it can be re-won later
-      saveDB();
-      renderView();
-      toast(`Moved back to ${col?.name || colId}${proj ? ' — project removed from TRACKR' : ''}`);
-      return;
     }
 
+    // Apply stage and any side-effects (won/lost transitions)
     deal.stage = colId;
+    if (col?.won && !deal.wonAt) deal.wonAt = new Date().toISOString().slice(0,10);
+    if (prevCol?.won && !col?.won) deal.wonAt = null; // moved back out of Won
+
+    // Single write — dealCommit handles the status flip (pipeline ↔ active ↔ lost)
+    dealCommit(deal);
     saveDB();
     renderView();
     if (prevStage !== colId) toast(`Moved to ${col?.name || colId}`);
+    // For Won transitions, only prompt to configure billing terms if they
+    // haven't been set yet. With the deal modal extended to capture contract
+    // details up-front, most Won transitions have terms already and don't
+    // need the follow-up modal.
+    if (col?.won && prevStage !== colId) {
+      const fresh = DB.deals.find(d => d.id === deal.id);
+      const proj = fresh ? getTrackrProjectForDeal(fresh.id) : null;
+      const hasTerms =
+        (proj?.billingType === 'fixed' && (proj.fixedFee || 0) > 0) ||
+        (proj?.billingType === 'retainer' && (proj.retainer?.monthlyFee || 0) > 0) ||
+        (proj?.billingType === 'variable_retainer' && (proj.variableRetainer?.yearlyBudget || 0) > 0) ||
+        proj?.billingType === 'time_materials';
+      if (fresh && !hasTerms && typeof showLinkedProjectModal === 'function') {
+        setTimeout(() => showLinkedProjectModal(fresh), 100);
+      }
+    }
   });
 }
 
@@ -957,24 +1345,31 @@ function getDragAfterElement(container, y) {
 function showDealModal(deal, defaultStage) {
   const isEdit = !!deal;
   const sortedCols = [...DB.columns].sort((a,b) => a.order - b.order);
-  const clients = getClients();
   const team = getTeam();
   const teamOptions = team.map(t => `<option value="${t.id}">${memberShortName(t)}</option>`).join('');
   const stageOptions = sortedCols.map(col =>
     `<option value="${col.id}" ${(deal?.stage||defaultStage||'lead')===col.id?'selected':''}>${col.name}</option>`
   ).join('');
-  // Client options — all clients and prospects from TRACKR
-  const clientOptions = clients.map(cl =>
-    `<option value="${cl.id}" ${deal?.clientId===cl.id?'selected':''}>${cl.name}${cl.classification==='prospect'?' (Prospect)':''}</option>`
-  ).join('');
-  // Resolve linked TRACKR project — used to keep date fields in sync
-  const linkedProjForDates = deal?.csmProjectId
+  // Client options — active clients and prospects from TRACKR (closed/archived
+  // are excluded unless this deal already references one of them)
+  const clientOptions = buildClientOptions(deal?.clientId || '');
+  // Resolve linked TRACKR project — used to keep date fields in sync AND
+  // to read the contracted billing terms (fixedFee / retainer / variableRetainer)
+  // so editing a deal shows the live contract not stale form state.
+  const linkedProj = deal?.csmProjectId
     ? getTrackrProjects().find(p => p.id === deal.csmProjectId)
     : null;
-  // For linked projects use proj.startDate/closedDate as the authoritative source;
-  // fall back to the deal's own stored dates for unlinked pipeline deals.
-  const initStartDate = linkedProjForDates?.startDate || deal?.startDate || '';
-  const initEndDate   = linkedProjForDates?.closedDate || deal?.endDate  || '';
+  const initStartDate = linkedProj?.startDate || deal?.startDate || '';
+  const initEndDate   = linkedProj?.closedDate || deal?.endDate  || '';
+  // Contract fields default to the linked project's values when one exists
+  // (so editing a deal shows what's actually contracted), or empty for fresh
+  // pipeline deals that haven't been refined yet.
+  const cFixedFee       = linkedProj?.fixedFee ?? '';
+  const cRetainerFee    = linkedProj?.retainer?.monthlyFee ?? '';
+  const cRetainerHours  = linkedProj?.retainer?.hoursIncluded ?? '';
+  const cRetainerDay    = linkedProj?.retainer?.billingDay ?? 1;
+  const cVrBudget       = linkedProj?.variableRetainer?.yearlyBudget ?? '';
+  const cVrRate         = linkedProj?.variableRetainer?.hourlyRate ?? '';
 
   const o = showModal(isEdit ? (getDealName(deal) || 'Edit Deal') : 'New Deal', `
     <div class="section-divider">Client</div>
@@ -1011,7 +1406,10 @@ function showDealModal(deal, defaultStage) {
       <div class="form-group full"><label>Project Name</label><input id="d-project" value="${getDealName(deal)}" placeholder="e.g. Website Redesign"></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label>Deal Value</label><input type="number" id="d-value" value="${deal?.value||''}" placeholder="0" min="0" step="100"></div>
+      <div class="form-group">
+        <label>Deal Value <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-3);margin-left:4px">— estimate</span></label>
+        <input type="number" id="d-value" value="${deal?.value||''}" placeholder="0" min="0" step="100">
+      </div>
       <div class="form-group"><label>Currency</label>
         <select id="d-currency">
           ${getCurrencies().map(cur=>`<option value="${cur}" ${(deal?.currency||DB.settings.currency||'USD')===cur?'selected':''}>${cur}</option>`).join('')}
@@ -1020,7 +1418,7 @@ function showDealModal(deal, defaultStage) {
       <div class="form-group"><label>Stage</label><select id="d-stage">${stageOptions}</select></div>
     </div>
     <div class="form-row">
-      <div class="form-group">
+      <div class="form-group full">
         <label>Billing Type</label>
         <select id="d-billing-type">
           <option value="fixed"             ${(deal?.billingType||'fixed')==='fixed'            ?'selected':''}>Fixed Fee</option>
@@ -1030,9 +1428,73 @@ function showDealModal(deal, defaultStage) {
         </select>
       </div>
     </div>
+
+    <!-- Contract Details (per billing type). These sit on the same record
+         as the deal; on Won transition they become the project's contracted
+         billing terms. Pipeline-stage deals can leave them blank — the team
+         refines as the deal progresses through Negotiation. -->
+    <div id="d-contract-wrap" style="background:rgba(74,127,193,0.04);border:1px solid rgba(74,127,193,0.18);border-radius:6px;padding:14px 16px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#4A7FC1;margin-bottom:10px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        Contract Details
+        <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:var(--text-3);margin-left:auto">Becomes the project terms when the deal is won</span>
+      </div>
+
+      <!-- Fixed Fee -->
+      <div class="d-contract-section" data-bt="fixed">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Fixed Fee Total</label>
+            <input type="number" id="d-fixed-fee" value="${cFixedFee}" placeholder="0" min="0" step="100">
+            <div style="font-size:11px;color:var(--text-3);margin-top:4px">Total contracted price for the engagement</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fixed Retainer -->
+      <div class="d-contract-section" data-bt="retainer">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Monthly Fee</label>
+            <input type="number" id="d-retainer-fee" value="${cRetainerFee}" placeholder="0" min="0" step="100">
+          </div>
+          <div class="form-group">
+            <label>Hours Included / mo</label>
+            <input type="number" id="d-retainer-hours" value="${cRetainerHours}" placeholder="0" min="0" step="1">
+          </div>
+          <div class="form-group" style="max-width:130px">
+            <label>Billing Day</label>
+            <input type="number" id="d-retainer-day" value="${cRetainerDay}" placeholder="1" min="1" max="31" step="1">
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:-4px">Fixed monthly fee for a defined hours bucket. Billing day is the day of the month TRACKR generates the retainer charge.</div>
+      </div>
+
+      <!-- Variable Retainer -->
+      <div class="d-contract-section" data-bt="variable_retainer">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Yearly Budget</label>
+            <input type="number" id="d-vr-budget" value="${cVrBudget}" placeholder="0" min="0" step="1000">
+          </div>
+          <div class="form-group">
+            <label>Hourly Rate</label>
+            <input type="number" id="d-vr-rate" value="${cVrRate}" placeholder="0" min="0" step="10">
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--text-3);margin-top:-4px">Annual budget consumed at a defined hourly rate. Monthly approvals/usage tracked in TRACKR.</div>
+      </div>
+
+      <!-- Time &amp; Materials -->
+      <div class="d-contract-section" data-bt="time_materials">
+        <div style="font-size:13px;color:var(--text-2);line-height:1.6;padding:6px 0">
+          No fixed contract value. Hours are billed at each team member's rate (defined by job-title rate cards in TRACKR).
+        </div>
+      </div>
+    </div>
     <div class="form-row">
       <div class="form-group"><label>Start Date</label><input type="date" id="d-start-date" value="${initStartDate}"></div>
-      <div class="form-group"><label>${linkedProjForDates ? 'Close Date' : 'End Date'}</label><input type="date" id="d-end-date" value="${initEndDate}"></div>
+      <div class="form-group"><label>${linkedProj ? 'Close Date' : 'End Date'}</label><input type="date" id="d-end-date" value="${initEndDate}"></div>
     </div>
     <div class="form-row">
       <div class="form-group"><label>Pre-Sales Lead</label>
@@ -1099,6 +1561,39 @@ function showDealModal(deal, defaultStage) {
     if (this.value === '__new__') o.querySelector('#d-ni-name')?.focus();
   });
 
+  // Show only the contract subsection that matches the selected billing type
+  function refreshContractSections() {
+    const bt = o.querySelector('#d-billing-type').value;
+    o.querySelectorAll('.d-contract-section').forEach(sec => {
+      sec.style.display = sec.dataset.bt === bt ? 'block' : 'none';
+    });
+  }
+  o.querySelector('#d-billing-type').addEventListener('change', refreshContractSections);
+  refreshContractSections();
+
+  // Auto-populate the Deal Value (pipeline estimate) from contract terms
+  // when the user hasn't entered one yet. Helpful while drafting a deal —
+  // they put in the contracted fixed fee, the pipeline estimate auto-fills.
+  // Stops once the user types into Deal Value directly.
+  let _dealValueTouched = !!(deal?.value);
+  o.querySelector('#d-value').addEventListener('input', () => { _dealValueTouched = true; });
+  function autoSyncDealValue() {
+    if (_dealValueTouched) return;
+    const bt = o.querySelector('#d-billing-type').value;
+    let suggested = 0;
+    if (bt === 'fixed')                  suggested = parseFloat(o.querySelector('#d-fixed-fee').value) || 0;
+    else if (bt === 'retainer')          suggested = parseFloat(o.querySelector('#d-retainer-fee').value) || 0; // monthly fee as a marker
+    else if (bt === 'variable_retainer') suggested = parseFloat(o.querySelector('#d-vr-budget').value) || 0;
+    if (suggested > 0) {
+      o.querySelector('#d-value').value = suggested;
+      if (typeof updateCommissionCalc === 'function') updateCommissionCalc();
+    }
+  }
+  ['#d-fixed-fee','#d-retainer-fee','#d-vr-budget'].forEach(sel => {
+    o.querySelector(sel)?.addEventListener('input', autoSyncDealValue);
+  });
+  o.querySelector('#d-billing-type').addEventListener('change', autoSyncDealValue);
+
   // Live commission calculator
   function updateCommissionCalc() {
     const pct  = parseFloat(o.querySelector('#d-intro-commission').value) || 0;
@@ -1156,6 +1651,7 @@ function showDealModal(deal, defaultStage) {
           id:             genId('cl'),
           name:           ncName,
           classification: o.querySelector('#d-nc-class').value,
+          status:         'active',
           email:          o.querySelector('#d-nc-email').value.trim(),
           phone:          o.querySelector('#d-nc-phone').value.trim(),
           currency:       DB.settings.currency || 'USD',
@@ -1175,19 +1671,33 @@ function showDealModal(deal, defaultStage) {
     const col   = DB.columns.find(col => col.id === stage);
     const client = getClients().find(cl => cl.id === clientId) || {};
 
+    // Build deal-shape payload. With the unified schema, this maps to a
+    // single mis-v1.projects record. Use the 'pr-' prefix so new ids match
+    // every other project record in mis-v1.projects.
+    const dealId = deal?.id || genId('pr');
+    const billingType = o.querySelector('#d-billing-type').value || 'fixed';
+    // Read all contract-section values from the form — but only persist the
+    // ones matching the selected billing type. Stale values from a previous
+    // billing-type pick stay on the project record (TRACKR ignores them
+    // since they don't match billingType), letting the user switch back
+    // and forth without losing their numbers.
+    const contractFixedFee   = parseFloat(o.querySelector('#d-fixed-fee').value)       || 0;
+    const contractRetFee     = parseFloat(o.querySelector('#d-retainer-fee').value)    || 0;
+    const contractRetHours   = parseFloat(o.querySelector('#d-retainer-hours').value)  || 0;
+    const contractRetDay     = parseInt(o.querySelector('#d-retainer-day').value, 10)  || 1;
+    const contractVrBudget   = parseFloat(o.querySelector('#d-vr-budget').value)       || 0;
+    const contractVrRate     = parseFloat(o.querySelector('#d-vr-rate').value)         || 0;
+
     const data = {
-      // Preserve all system/link fields from the existing deal when editing
-      ...(deal ? {
-        csmProjectId: deal.csmProjectId || null,
-        csmDealId:    deal.csmDealId    || null,
-      } : {}),
-      id:          deal?.id || genId('deal'),
+      id:          dealId,
+      csmProjectId: dealId,
+      csmDealId:    deal?.csmDealId || null,
       clientId,
       projectName: projectName || client.name,
-      name:        client.name || projectName, // legacy compat
+      name:        client.name || projectName,
       value:       parseFloat(o.querySelector('#d-value').value) || 0,
       currency:    o.querySelector('#d-currency').value,
-      billingType: o.querySelector('#d-billing-type').value || 'fixed',
+      billingType,
       stage,
       preSalesLead: o.querySelector('#d-presales').value || null,
       teamLead:    o.querySelector('#d-tl').value || null,
@@ -1197,7 +1707,18 @@ function showDealModal(deal, defaultStage) {
       startDate:   o.querySelector('#d-start-date').value || null,
       endDate:     o.querySelector('#d-end-date').value || null,
       createdAt:   deal?.createdAt || new Date().toISOString().slice(0,10),
-      wonAt:       deal?.wonAt || (col?.won ? new Date().toISOString().slice(0,10) : null),
+      // wonAt: stamped while in Won (preserved across edits), cleared when
+      // moving to any other column. dealToProjectShape honours explicit null
+      // values to clear, and 'today' to set on first Won transition.
+      wonAt:       col?.won
+                     ? (deal?.wonAt || new Date().toISOString().slice(0,10))
+                     : null,
+      // Contract terms — only flow through the section matching the selected
+      // billing type, so we don't accidentally write zeros over existing
+      // values for the other billing types when the user picks one.
+      ...(billingType === 'fixed'             ? { contractFixedFee } : {}),
+      ...(billingType === 'retainer'          ? { contractRetainer:        { monthlyFee: contractRetFee, hoursIncluded: contractRetHours, billingDay: contractRetDay } } : {}),
+      ...(billingType === 'variable_retainer' ? { contractVariableRetainer:{ yearlyBudget: contractVrBudget, hourlyRate: contractVrRate } } : {}),
     };
 
     // Handle introducer — create new if needed
@@ -1218,82 +1739,67 @@ function showDealModal(deal, defaultStage) {
     } else {
       data.introducerId = intrSel || null;
     }
-    if (isEdit) { const idx = DB.deals.findIndex(d => d.id === deal.id); if (idx>=0) DB.deals[idx] = data; }
-    else DB.deals.push(data);
-    saveDB();
 
-    // Sync to TRACKR project BEFORE removing the modal — avoids detached-DOM read issues
-    const linkedProj = getTrackrProjectForDeal(data.id);
-    if (linkedProj) {
-      let projChanged = false;
-      // Use data.projectName (already computed) — never read from the modal DOM after o.remove()
-      if (data.projectName && data.projectName !== linkedProj.name)      { linkedProj.name     = data.projectName; projChanged = true; }
-      if (data.clientId    && data.clientId    !== linkedProj.clientId)  { linkedProj.clientId = data.clientId;    projChanged = true; }
-      if (data.currency    && data.currency    !== linkedProj.currency)  { linkedProj.currency = data.currency;    projChanged = true; }
-      if (data.teamLead    !== undefined && data.teamLead !== linkedProj.leadId) { linkedProj.leadId = data.teamLead || ''; projChanged = true; }
-      // Sync dates — deal.startDate → proj.startDate, deal.endDate → proj.closedDate
-      const dStart = data.startDate || '';
-      const dEnd   = data.endDate   || '';
-      if (dStart !== (linkedProj.startDate  || '')) { linkedProj.startDate  = dStart; projChanged = true; }
-      if (dEnd   !== (linkedProj.closedDate || '')) { linkedProj.closedDate = dEnd;   projChanged = true; }
-      if (projChanged) {
-        // Keep deal's stored projectName in sync too so offline display is correct
-        const idx2 = DB.deals.findIndex(d => d.id === data.id);
-        if (idx2 >= 0) { DB.deals[idx2].projectName = linkedProj.name; DB.deals[idx2].name = linkedProj.name; }
-        saveProjectToTrackr(linkedProj);
-        pushProjectToTrackrSupabase(linkedProj); // also push directly to Supabase so TRACKR picks it up
-        saveDB();
+    // Detect un-Won transition: the deal was in Won, the user picked a different
+    // (non-Won) stage in the modal. Same data-loss risk as the drag handler —
+    // confirm before flipping status away from active.
+    const prevWonStage = isEdit && deal?.stage ? DB.columns.find(c => c.id === deal.stage)?.won : false;
+    const newIsWon = !!col?.won;
+    if (prevWonStage && !newIsWon) {
+      const { hourCount, invoiceCount, totalHours } = getUnWonImpact(dealId);
+      if (hourCount > 0 || invoiceCount > 0) {
+        const targetName = col?.name || 'that column';
+        const parts = [];
+        if (hourCount > 0)    parts.push(`<strong>${totalHours.toFixed(1)}h logged</strong> across ${hourCount} entr${hourCount===1?'y':'ies'}`);
+        if (invoiceCount > 0) parts.push(`<strong>${invoiceCount} invoice${invoiceCount===1?'':'s'}</strong>`);
+        const consequences = [];
+        if (hourCount > 0)    consequences.push('Logged hours stay in TRACKR but become non-billable (pre-sales hours are 0-rated).');
+        if (invoiceCount > 0) consequences.push('Invoices remain in TRACKR but no longer roll up under an active project — they show as orphan billings.');
+        // Close the deal modal first so the confirm modal sits on top cleanly
+        o.remove();
+        confirmModal(
+          'Move out of Closed Won?',
+          `<strong>${getDealName(deal) || projectName || client.name}</strong> has ${parts.join(' and ')} attached.<br><br>
+           Moving it to <strong>${targetName}</strong> will:<br>
+           ${consequences.map(c => '• ' + c).join('<br>')}<br><br>
+           This is reversible — move the deal back to Closed Won to restore active status.`,
+          'Move it anyway',
+          () => {
+            dealCommit(data);
+            saveDB();
+            renderView();
+            toast('Deal updated ✓');
+          }
+        );
+        return;
       }
     }
+
+    // Single write: stamps the unified project record in mis-v1.projects.
+    // Status flips happen automatically based on which column the deal is in.
+    dealCommit(data);
+    saveDB();
 
     o.remove(); renderView();
     toast(isEdit ? 'Deal updated ✓' : 'Deal added ✓');
-
-    // If moved INTO Closed Won and project exists but was closed — re-open it
-    if (col?.won && data.csmProjectId) {
-      const proj = getTrackrProjects().find(p => p.id === data.csmProjectId);
-      if (proj && proj.closedDate) {
-        proj.closedDate = '';
-        saveProjectToTrackr(proj);
-        pushProjectToTrackrSupabase(proj);
-      }
-    }
-
-    // If moved into Closed Won and no project yet, auto-create one
-    // data.csmProjectId is preserved from existing deal so this won't fire on edits
-    if (col?.won && !data.csmProjectId && !getTrackrProjectForDeal(data.id)) {
-      setTimeout(() => autoCreateProjectForDeal(data), 200);
-    }
-
-    // If moved OUT of Closed Won via the modal, remove the linked TRACKR project
-    // (same logic as the drag handler — only if no hours logged)
-    const prevCol2 = deal ? DB.columns.find(c => c.id === deal.stage) : null;
-    if (isEdit && prevCol2?.won && !col?.won && data.csmProjectId) {
-      const projToRemove = getTrackrProjects().find(p => p.id === data.csmProjectId);
-      if (projToRemove) {
-        try {
-          const mis = JSON.parse(localStorage.getItem('mis-v1') || '{}');
-          const hasHours = (mis.timeEntries || []).some(e => e.projectId === projToRemove.id);
-          if (hasHours) {
-            toast('Warning: this project has logged hours in TRACKR — project kept but deal moved', 'error');
-          } else {
-            deleteProjectFromTrackr(projToRemove.id);
-            deleteProjectFromTrackrSupabase(projToRemove.id);
-            data.csmProjectId = null; // already set on the saved deal above
-            const idx2 = DB.deals.findIndex(d => d.id === data.id);
-            if (idx2 >= 0) DB.deals[idx2].csmProjectId = null;
-            saveDB();
-          }
-        } catch(_) {}
-      }
-    }
   };
 
   if (isEdit) {
     o.querySelector('#d-del').onclick = () => {
       o.remove();
       confirmModal('Delete Deal', `Remove <strong>${getDealName(deal)||deal.name}</strong> permanently?`, 'Delete', () => {
-        DB.deals = DB.deals.filter(d => d.id !== deal.id);
+        // Refuse to delete if the project has logged hours or invoices in TRACKR —
+        // deletion would orphan that data. Use the shared impact helper to keep
+        // the check aligned with the un-Won transition guard.
+        const { hourCount, invoiceCount, totalHours } = getUnWonImpact(deal.id);
+        if (hourCount > 0 || invoiceCount > 0) {
+          const parts = [];
+          if (hourCount > 0)    parts.push(`${totalHours.toFixed(1)}h logged`);
+          if (invoiceCount > 0) parts.push(`${invoiceCount} invoice${invoiceCount===1?'':'s'}`);
+          toast(`Has ${parts.join(' and ')} in TRACKR — close it from there instead`, 'error');
+          return;
+        }
+        dealRemove(deal.id);
         saveDB(); renderView(); toast('Deal deleted');
       });
     };
@@ -1304,41 +1810,11 @@ function showDealModal(deal, defaultStage) {
 // ════════════════════════════════════════════════════════
 //  CONVERT TO PROJECT MODAL
 // ════════════════════════════════════════════════════════
-function autoCreateProjectForDeal(deal) {
-  // Don't create if one already exists
-  if (getTrackrProjectForDeal(deal.id)) return;
-  if (!deal.clientId && !deal.projectName) return;
-
-  const project = {
-    id:              genId('pr'),
-    csmDealId:       deal.id,
-    name:            getDealName(deal) || (getClients().find(c => c.id === deal.clientId)?.name) || deal.name,
-    clientId:        deal.clientId || null,
-    currency:        deal.currency || DB.settings.currency || 'USD',
-    leadId:          deal.teamLead || '',
-    billingType:     'time_materials',
-    retainer:        { hoursIncluded:0, monthlyFee:0, overageEnabled:false, overageRate:0, billingDay:1 },
-    fixedFee:        0,
-    variableRetainer:{ yearlyBudget:0, hourlyRate:0, approvals:{} },
-    startDate:       deal.wonAt || new Date().toISOString().slice(0,10),
-    closedDate:      '',
-    rateOverrides:   {},
-    members:         [],
-    files:           [],
-  };
-
-  // Set csmProjectId on the deal BEFORE calling saveProjectToTrackr.
-  // saveProjectToTrackr fires a StorageEvent synchronously which triggers
-  // seedProjectsIntoPipeline — if csmProjectId isn't set yet the dedup
-  // check misses and creates a duplicate Won deal.
-  const idx = DB.deals.findIndex(d => d.id === deal.id);
-  if (idx >= 0) { DB.deals[idx].csmProjectId = project.id; saveDB(); }
-
-  saveProjectToTrackr(project);
-  pushProjectToTrackrSupabase(project); // push directly to Supabase so TRACKR sees it even if not open
-
-  toast(`Project "${project.name}" created in TRACKR ✓ — set billing type there`);
-}
+// Legacy stub — under the unified schema, won transitions are handled by
+// dealCommit() which flips status from 'pipeline' to 'active' on the same
+// record. There's no separate project to create. Kept as a no-op for
+// backwards compat with any caller still referencing it.
+function autoCreateProjectForDeal(_deal) { /* no-op */ }
 
 
 // ════════════════════════════════════════════════════════
@@ -1549,11 +2025,10 @@ function showHealthModal(deal) {
       DB.health[deal.id][m].notes    = o.querySelector('#h-notes').value.trim();
       DB.health[deal.id][m].teamLead = o.querySelector('#h-tl').value || null;
       DB.health[deal.id][m].techLead = o.querySelector('#h-tech').value || null;
-      // Also update deal leads
+      // Also update deal leads (writes to mis-v1.projects via dealCommit)
       deal.teamLead = DB.health[deal.id][m].teamLead;
       deal.techLead = DB.health[deal.id][m].techLead;
-      const idx = DB.deals.findIndex(d => d.id === deal.id);
-      if (idx >= 0) { DB.deals[idx].teamLead = deal.teamLead; DB.deals[idx].techLead = deal.techLead; }
+      dealCommit(deal);
       saveDB();
       o.remove();
       renderView();
@@ -1578,27 +2053,54 @@ function renderIntroducers(el, acts) {
   acts.appendChild(addBtn);
   addBtn.onclick = () => showIntroducerModal(null, () => renderView());
 
-  // Stats bar
-  const totalDeals = deals.filter(d => d.introducerId).length;
-  const totalCommission = deals.reduce((sum, d) => {
-    if (!d.introducerId || !d.introduction?.commission) return sum;
-    return sum + (d.value || 0) * (d.introduction.commission / 100);
-  }, 0);
+  // Bucket every introducer-attached deal into pipeline vs won. Lost deals
+  // are excluded from both totals (no commission owed). For won deals we
+  // use resolveDealValue() so the commission tracks the actual contracted
+  // amount in TRACKR (including change orders), matching the pipeline column.
+  function dealBucket(d) {
+    const col = DB.columns.find(c => c.id === d.stage);
+    if (col?.won)  return 'won';
+    if (col?.lost) return 'lost';
+    return 'pipeline';
+  }
+  function dealValueForBucket(d, bucket) {
+    if (bucket === 'won') return resolveDealValue(d).value || 0;
+    return d.value || 0;
+  }
+
+  const introducerDeals = deals.filter(d => d.introducerId);
+  const totalDeals = introducerDeals.length;
+  let pipelineCommission = 0;
+  let wonCommission = 0;
+  introducerDeals.forEach(d => {
+    const pct = d.introduction?.commission || 0;
+    if (!pct) return;
+    const bucket = dealBucket(d);
+    if (bucket === 'lost') return;
+    const value = dealValueForBucket(d, bucket);
+    const commission = value * (pct / 100);
+    if (bucket === 'won') wonCommission += commission;
+    else                  pipelineCommission += commission;
+  });
   const curr = DB.settings.currency || 'USD';
 
   el.innerHTML = `
-    <div style="display:flex;gap:16px;margin-bottom:24px">
-      <div class="card" style="flex:1;padding:16px 20px">
+    <div style="display:flex;gap:16px;margin-bottom:24px;flex-wrap:wrap">
+      <div class="card" style="flex:1;min-width:180px;padding:16px 20px">
         <div class="lbl" style="margin-bottom:4px">Introducers</div>
         <div style="font-size:28px;font-weight:300;color:var(--text)">${introducers.length}</div>
       </div>
-      <div class="card" style="flex:1;padding:16px 20px">
+      <div class="card" style="flex:1;min-width:180px;padding:16px 20px">
         <div class="lbl" style="margin-bottom:4px">Deals Introduced</div>
         <div style="font-size:28px;font-weight:300;color:var(--text)">${totalDeals}</div>
       </div>
-      <div class="card" style="flex:1;padding:16px 20px">
-        <div class="lbl" style="margin-bottom:4px">Total Commission Exposure</div>
-        <div style="font-size:28px;font-weight:300;color:var(--accent)">${fmtVal(totalCommission, curr)}</div>
+      <div class="card" style="flex:1;min-width:180px;padding:16px 20px" title="Commission exposure on deals still in pipeline (not yet won or lost)">
+        <div class="lbl" style="margin-bottom:4px">Pipeline Commission</div>
+        <div style="font-size:28px;font-weight:300;color:var(--text-2)">${fmtVal(pipelineCommission, curr)}</div>
+      </div>
+      <div class="card" style="flex:1;min-width:180px;padding:16px 20px" title="Commission earned on Closed Won deals — uses the contracted project value from TRACKR (incl. change orders)">
+        <div class="lbl" style="margin-bottom:4px">Won Commission</div>
+        <div style="font-size:28px;font-weight:300;color:var(--accent)">${fmtVal(wonCommission, curr)}</div>
       </div>
     </div>
     ${introducers.length === 0 ? `
@@ -1608,17 +2110,28 @@ function renderIntroducers(el, acts) {
         </div>
       </div>` : introducers.map(intr => {
         const intrDeals = deals.filter(d => d.introducerId === intr.id);
-        const intrCommission = intrDeals.reduce((sum, d) =>
-          sum + (d.value || 0) * ((d.introduction?.commission || 0) / 100), 0);
+        let intrPipeline = 0;
+        let intrWon      = 0;
+        intrDeals.forEach(d => {
+          const pct = d.introduction?.commission || 0;
+          if (!pct) return;
+          const bucket = dealBucket(d);
+          if (bucket === 'lost') return;
+          const value = dealValueForBucket(d, bucket);
+          const commission = value * (pct / 100);
+          if (bucket === 'won') intrWon += commission;
+          else                  intrPipeline += commission;
+        });
         const dealCount = intrDeals.length;
+        const hasAny = intrPipeline > 0 || intrWon > 0;
         return `
         <div class="card mb-20" id="intr-card-${intr.id}">
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:${dealCount?'16px':'0'}">
-            <div style="display:flex;align-items:center;gap:14px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:${dealCount?'16px':'0'};gap:14px">
+            <div style="display:flex;align-items:center;gap:14px;min-width:0">
               <div style="width:40px;height:40px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex-shrink:0">
                 ${intr.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}
               </div>
-              <div>
+              <div style="min-width:0">
                 <div style="font-weight:700;font-size:15px;color:var(--text)">${intr.name}</div>
                 ${intr.company ? `<div style="font-size:14px;color:#898987;margin-top:1px">${intr.company}</div>` : ''}
                 <div style="display:flex;gap:12px;margin-top:4px;flex-wrap:wrap">
@@ -1628,13 +2141,23 @@ function renderIntroducers(el, acts) {
                 ${intr.notes ? `<div style="font-size:14px;color:#898987;margin-top:4px;font-style:italic">${intr.notes}</div>` : ''}
               </div>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-              ${intrCommission > 0 ? `<div style="text-align:right;margin-right:8px">
-                <div class="lbl">Commission</div>
-                <div style="font-size:15px;font-weight:700;color:var(--accent)">${fmtVal(intrCommission, curr)}</div>
-              </div>` : ''}
-              <button class="btn btn-ghost btn-sm intr-edit-btn" data-id="${intr.id}">Edit</button>
-              ${dealCount === 0 ? `<button class="btn btn-ghost btn-sm intr-del-btn" data-id="${intr.id}" style="color:var(--danger)">Delete</button>` : ''}
+            <div style="display:flex;align-items:center;gap:14px;flex-shrink:0">
+              ${hasAny ? `
+                <div style="display:flex;gap:18px;text-align:right">
+                  <div>
+                    <div class="lbl">Pipeline</div>
+                    <div style="font-size:15px;font-weight:700;color:var(--text-2)">${fmtVal(intrPipeline, curr)}</div>
+                  </div>
+                  <div>
+                    <div class="lbl">Won</div>
+                    <div style="font-size:15px;font-weight:700;color:var(--accent)">${fmtVal(intrWon, curr)}</div>
+                  </div>
+                </div>
+              ` : ''}
+              <div style="display:flex;gap:6px">
+                <button class="btn btn-ghost btn-sm intr-edit-btn" data-id="${intr.id}">Edit</button>
+                ${dealCount === 0 ? `<button class="btn btn-ghost btn-sm intr-del-btn" data-id="${intr.id}" style="color:var(--danger)">Delete</button>` : ''}
+              </div>
             </div>
           </div>
           ${dealCount > 0 ? `
@@ -1654,9 +2177,26 @@ function renderIntroducers(el, acts) {
                 ${intrDeals.map(d => {
                   const col = DB.columns.find(c => c.id === d.stage);
                   const pct = d.introduction?.commission || 0;
-                  const commVal = (d.value || 0) * (pct / 100);
-                  const dCurr = d.currency || curr;
-                  return `<tr style="border-bottom:1px solid #F2F1EE">
+                  const bucket = dealBucket(d);
+                  const dealVal = dealValueForBucket(d, bucket);
+                  const commVal = bucket === 'lost' ? 0 : dealVal * (pct / 100);
+                  const dCurr = (bucket === 'won' ? resolveDealValue(d).currency : d.currency) || curr;
+                  // Won deals use TRACKR's contracted total (incl change orders);
+                  // when the project's contract field is empty the figure
+                  // falls back to the original pipeline budget — the label
+                  // tells the user which source they're looking at.
+                  let valSrcText = '';
+                  if (bucket === 'won') {
+                    const lbl = resolveDealValue(d).label;
+                    if (lbl === 'budget')        valSrcText = 'T&M budget';
+                    else if (lbl === 'estimate') valSrcText = 'pipeline estimate';
+                    else if (lbl === '/yr')      valSrcText = 'yearly';
+                    else if (lbl === '/mo')      valSrcText = 'monthly';
+                    else                          valSrcText = 'contracted';
+                  }
+                  const valSrc = valSrcText ? `<span style="font-size:9px;color:#ADADAB;display:block;margin-top:1px">${valSrcText}</span>` : '';
+                  const rowOpacity = bucket === 'lost' ? '0.5' : '1';
+                  return `<tr style="border-bottom:1px solid #F2F1EE;opacity:${rowOpacity}">
                     <td style="padding:8px 12px">
                       <div style="font-weight:600">${getDealName(d) || '—'}</div>
                       ${d.clientId ? `<div style="font-size:11px;color:#898987">${getClients().find(cl=>cl.id===d.clientId)?.name||''}</div>` : ''}
@@ -1665,14 +2205,14 @@ function renderIntroducers(el, acts) {
                       <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${col?.color||'#ADADAB'};margin-right:5px"></span>
                       <span style="color:#898987">${col?.name||d.stage}</span>
                     </td>
-                    <td style="padding:8px 12px;text-align:right;font-weight:600">${d.value ? fmtVal(d.value, dCurr) : '—'}</td>
+                    <td style="padding:8px 12px;text-align:right;font-weight:600">${dealVal ? fmtVal(dealVal, dCurr) : '—'}${valSrc}</td>
                     <td style="padding:8px 12px;text-align:center">
                       <input type="number" class="intr-pct-inp" data-deal="${d.id}"
                         value="${pct||''}" min="0" max="100" step="0.5" placeholder="0"
                         style="width:60px;text-align:center;border:1px solid var(--border);border-radius:3px;padding:3px 6px;font-size:13px;font-weight:600;font-family:inherit">
                       <span style="color:#898987">%</span>
                     </td>
-                    <td style="padding:8px 12px;text-align:right;font-weight:700;color:${commVal>0?'var(--accent)':'#ADADAB'}" class="intr-comm-val" data-deal="${d.id}">
+                    <td style="padding:8px 12px;text-align:right;font-weight:700;color:${commVal>0?(bucket==='won'?'var(--accent)':'var(--text-2)'):'#ADADAB'}" class="intr-comm-val" data-deal="${d.id}">
                       ${commVal > 0 ? fmtVal(commVal, dCurr) : '—'}
                     </td>
                   </tr>`;
@@ -1709,17 +2249,17 @@ function renderIntroducers(el, acts) {
     const update = () => {
       const deal = DB.deals.find(d => d.id === inp.dataset.deal);
       if (!deal) return;
-      if (!deal.introduction) deal.introduction = {};
-      deal.introduction.commission = parseFloat(inp.value) || 0;
+      // Mutate a fresh copy so the in-memory deal stays consistent with the
+      // re-derived view from mis-v1.projects after dealCommit re-syncs.
+      const updated = {
+        ...deal,
+        introduction: { ...(deal.introduction || {}), commission: parseFloat(inp.value) || 0 },
+      };
+      // Persist to the project record. dealCommit fires a storage event that
+      // triggers a full renderView, which re-paints the commission cell from
+      // canonical state — no manual DOM update needed.
+      dealCommit(updated);
       saveDB();
-      // Update the commission value cell in place
-      const dCurr = deal.currency || curr;
-      const commVal = (deal.value || 0) * (deal.introduction.commission / 100);
-      const valCell = el.querySelector(`.intr-comm-val[data-deal="${deal.id}"]`);
-      if (valCell) {
-        valCell.textContent = commVal > 0 ? fmtVal(commVal, dCurr) : '—';
-        valCell.style.color = commVal > 0 ? 'var(--accent)' : '#ADADAB';
-      }
     };
     inp.addEventListener('blur', update);
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); });
@@ -1745,13 +2285,10 @@ function showLinkedProjectModal(deal) {
   const vr          = p.variableRetainer || { yearlyBudget:0, hourlyRate:0, approvals:{} };
   const fixedFee    = p.fixedFee || '';
 
-  const clients  = getClients();
   const team     = getTrackrTeam();
   const currencies = getCurrencies();
 
-  const clientOptions = clients.map(c =>
-    `<option value="${c.id}" ${c.id === p.clientId ? 'selected' : ''}>${c.name}</option>`
-  ).join('');
+  const clientOptions = buildClientOptions(p.clientId || '');
   const leadOptions = team.map(m => {
     const name = m.nickname ? m.nickname : (m.name||'').split(' ').map((w,i,a) => i===0 ? w : w[0]+'.').join(' ');
     return `<option value="${m.id}" ${m.id === p.leadId ? 'selected' : ''}>${name}</option>`;
@@ -2004,20 +2541,13 @@ function showLinkedProjectModal(deal) {
       closedDate: o.querySelector('#lp-close-date').value  || '',
     };
 
-    // Save to localStorage and Supabase
+    // Save to localStorage and Supabase. Under the unified schema, the deal
+    // and project are the same record, so this single write updates both
+    // views automatically. syncDealsFromProjects() refreshes DB.deals.
     saveProjectToTrackr(updated);
     pushProjectToTrackrSupabase(updated);
-
-    // Also sync name/clientId/dates back to the Grow deal
-    const dealIdx = DB.deals.findIndex(d => d.id === deal.id);
-    if (dealIdx >= 0) {
-      if (updated.name      !== DB.deals[dealIdx].projectName) { DB.deals[dealIdx].projectName = updated.name;       DB.deals[dealIdx].name = updated.name; }
-      if (updated.clientId  !== DB.deals[dealIdx].clientId)    { DB.deals[dealIdx].clientId    = updated.clientId; }
-      // Keep deal dates in sync with proj.startDate / proj.closedDate
-      DB.deals[dealIdx].startDate = updated.startDate  || null;
-      DB.deals[dealIdx].endDate   = updated.closedDate || null;
-      saveDB();
-    }
+    syncDealsFromProjects();
+    saveDB();
 
     o.remove();
     renderView();
@@ -2074,134 +2604,656 @@ function showIntroducerModal(intr, onSave) {
 // ════════════════════════════════════════════════════════
 //  CLIENTS LIST
 // ════════════════════════════════════════════════════════
-function renderClientsList(el, acts) {
-  const clients = getClients();
+// State for the Active/Closed/Prospects sub-toggle. Persists across re-renders
+// within the session; resets to 'active' on full reload.
+let clientsStatusFilter = 'active'; // 'active' | 'closed' | 'prospects'
 
-  // Add client button (opens TRACKR's client modal concept inline)
+function renderClientsList(el, acts) {
+  // Org-chart drill-in — when set, show the contact org chart for that client
+  // instead of the regular table list. Returns when done so the rest of this
+  // function (table rendering) doesn't run for the chart view.
+  if (_orgChartClientId) {
+    renderOrgChart(el, acts, _orgChartClientId);
+    return;
+  }
+
+  // Read all records — sub-toggle decides which slice we show
+  const allRecords    = getClients();
+  const allClients    = allRecords.filter(c => (c.classification || 'client') !== 'prospect' && !c.archived);
+  const allProspects  = allRecords.filter(c => c.classification === 'prospect' && !c.archived);
+  const activeCount   = allClients.filter(c => (c.status || 'active') !== 'closed').length;
+  const closedCount   = allClients.filter(c => c.status === 'closed').length;
+  const prospectCount = allProspects.length;
+  const filter        = clientsStatusFilter;
+
+  // Add-client button in the topbar action area
   const addBtn = document.createElement('button');
   addBtn.className = 'btn btn-primary btn-sm';
   addBtn.innerHTML = '+ New Client';
   addBtn.onclick = () => showNewClientModal(() => renderView());
   acts.appendChild(addBtn);
 
-  if (!clients.length) {
-    el.innerHTML = `<div style="text-align:center;padding:60px 24px;color:#ADADAB">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#E2E2E2" stroke-width="1.5" style="margin-bottom:12px"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      <p style="font-size:14px;margin-bottom:6px">No clients yet.</p>
-      <p style="font-size:14px">Add clients here or manage them in TRACKR.</p>
-    </div>`;
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px">
+      <button class="btn btn-sm ${filter==='active'    ? 'btn-primary' : 'btn-ghost'}" id="cf-active">
+        Active <span style="opacity:.65;margin-left:4px">${activeCount}</span>
+      </button>
+      <button class="btn btn-sm ${filter==='closed'    ? 'btn-primary' : 'btn-ghost'}" id="cf-closed">
+        Closed <span style="opacity:.65;margin-left:4px">${closedCount}</span>
+      </button>
+      <button class="btn btn-sm ${filter==='prospects' ? 'btn-primary' : 'btn-ghost'}" id="cf-prospects" title="Pre-sales records — created in Grow when a deal opens, convert to Clients when the deal is won">
+        Prospects <span style="opacity:.65;margin-left:4px">${prospectCount}</span>
+      </button>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Client</th>
+              <th>Status</th>
+              <th>Currency</th>
+              <th>Billing</th>
+              <th>Deals</th>
+              <th>Pipeline Value</th>
+              <th style="text-align:right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="clients-body"></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  el.querySelector('#cf-active').addEventListener('click',    () => { clientsStatusFilter = 'active';    renderView(); });
+  el.querySelector('#cf-closed').addEventListener('click',    () => { clientsStatusFilter = 'closed';    renderView(); });
+  el.querySelector('#cf-prospects').addEventListener('click', () => { clientsStatusFilter = 'prospects'; renderView(); });
+
+  // Pick the visible slice based on the current sub-toggle
+  let visibleClients;
+  if (filter === 'prospects')   visibleClients = allProspects;
+  else if (filter === 'closed') visibleClients = allClients.filter(c => c.status === 'closed');
+  else                          visibleClients = allClients.filter(c => (c.status || 'active') !== 'closed');
+
+  const body = el.querySelector('#clients-body');
+  if (visibleClients.length === 0) {
+    const emptyMsg = filter === 'prospects'
+      ? 'No prospects. Prospects are typically created when a deal opens against a new contact — they convert to Clients when the deal is won.'
+      : (filter === 'closed' ? 'No closed clients.' : 'No clients yet. Add your first client.');
+    body.innerHTML = `<tr><td colspan="7"><div class="empty-state"><p>${emptyMsg}</p></div></td></tr>`;
     return;
   }
 
-  // Stats
-  const total     = clients.length;
-  const prospects = clients.filter(c => c.classification === 'prospect').length;
-  const active    = total - prospects;
-  el.innerHTML = `
-    <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
-      <div class="stat-card">
-        <div style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#898987;margin-bottom:4px">Total</div>
-        <div style="font-size:24px;font-weight:300;color:#2F2F2F">${total}</div>
-      </div>
-      <div class="stat-card">
-        <div style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#898987;margin-bottom:4px">Clients</div>
-        <div style="font-size:24px;font-weight:300;color:#678F2F">${active}</div>
-      </div>
-      <div class="stat-card">
-        <div style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#898987;margin-bottom:4px">Prospects</div>
-        <div style="font-size:24px;font-weight:300;color:#4A7FC1">${prospects}</div>
-      </div>
-    </div>
-    <div style="background:#fff;border:1px solid #E2E2E2;border-radius:6px;overflow:hidden">
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead>
-          <tr style="background:#FAFAF9">
-            <th class="th-first">Name</th>
-            <th class="th-std">Lead Contact</th>
-            <th class="th-std">Classification</th>
-            <th class="th-std">Deals</th>
-            <th class="th-std">Pipeline Value</th>
-            <th style="padding:11px 12px;border-bottom:1px solid #E2E2E2"></th>
-          </tr>
-        </thead>
-        <tbody id="clients-list-body"></tbody>
-      </table>
-    </div>`;
-
-  const tbody = el.querySelector('#clients-list-body');
-  clients.forEach(client => {
-    const deals      = DB.deals.filter(d => d.clientId === client.id);
-    const totalVal   = deals.reduce((s, d) => s + (d.value || 0), 0);
-    const isProspect = client.classification === 'prospect';
-    const lead = (client.contacts || []).find(ct => ct.isLead) || (client.contacts || [])[0] || null;
-    const contactCount = (client.contacts || []).length;
+  visibleClients.forEach(c => {
+    const dealsForClient = (DB.deals || []).filter(d => d.clientId === c.id);
+    const totalVal       = dealsForClient.reduce((s, d) => s + (d.value || 0), 0);
+    const isCustom       = c.billingModel === 'rate_card';
+    const isClosed       = c.status === 'closed';
+    const isProspect     = c.classification === 'prospect';
+    const dimRow         = isClosed; // prospects keep full opacity — they're the focus of Grow
     const tr = document.createElement('tr');
-    tr.style.cssText = 'border-bottom:1px solid #F2F1EE;cursor:pointer;transition:background .08s';
+    tr.style.cursor = 'pointer';
     tr.innerHTML = `
-      <td style="padding:12px 18px">
-        <div style="font-weight:700;color:#2F2F2F">${client.name}</div>
-        ${client.email ? `<div style="font-size:11px;color:#ADADAB;margin-top:2px">${client.email}</div>` : ''}
+      <td>
+        <div style="display:flex;align-items:center;gap:10px">
+          ${c.logo
+            ? `<div style="width:40px;height:28px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:var(--bg);border:1px solid var(--border);border-radius:3px;overflow:hidden${dimRow?';opacity:.5':''}"><img src="${c.logo}" style="max-width:100%;max-height:100%;object-fit:contain"></div>`
+            : `<div style="width:40px;height:28px;flex-shrink:0;background:var(--bg);border:1px solid var(--border);border-radius:3px;display:flex;align-items:center;justify-content:center"><span style="font-size:11px;font-weight:700;color:var(--text-3)">${(c.name||'?').charAt(0).toUpperCase()}</span></div>`}
+          <span style="font-weight:600;font-family:var(--font);${dimRow?'color:var(--text-3)':''}">${(c.name||'').replace(/</g,'&lt;')}</span>
+          ${c.importedAt ? '<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:100px;white-space:nowrap;background:rgba(212,160,23,0.1);color:#B8860B">↓ Imported</span>' : ''}
+        </div>
       </td>
-      <td style="padding:12px">
-        ${lead
-          ? `<div style="font-weight:600;font-size:13px;color:#2F2F2F">${lead.name}</div>
-             <div style="font-size:11px;color:#ADADAB;margin-top:1px">${[lead.jobTitle, lead.email].filter(Boolean).join(' · ')}</div>`
-          : `<span style="font-size:14px;color:#ADADAB">No contacts</span>`}
+      <td>
+        ${isProspect
+          ? '<span class="badge badge-blue">Prospect</span>'
+          : (isClosed ? '<span class="badge badge-gray">Closed</span>' : '<span class="badge badge-green">Active</span>')}
       </td>
-      <td style="padding:12px">
-        <span class="badge ${isProspect ? 'badge-blue' : 'badge-green'}">${isProspect ? 'Prospect' : 'Client'}</span>
+      <td><span class="badge badge-blue">${c.currency||'—'}</span></td>
+      <td>
+        <button class="btn btn-ghost btn-sm cl-edit-billing" data-id="${c.id}" style="font-size:14px;padding:4px 10px" title="Billing model is set in TRACKR">
+          ${isCustom ? '<span class="badge badge-green" style="pointer-events:none">Custom rate card</span>' : '<span class="badge badge-gray" style="pointer-events:none">Standard</span>'}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11" style="margin-left:4px;opacity:.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
       </td>
-      <td style="padding:12px;color:#898987">${deals.length}</td>
-      <td style="padding:12px;font-weight:700;color:${totalVal>0?'#678F2F':'#ADADAB'}">${totalVal > 0 ? fmtVal(totalVal) : '—'}</td>
-      <td style="padding:12px;text-align:right">
-        <button class="btn btn-ghost btn-sm cl-edit" data-id="${client.id}" style="font-size:11px">Edit</button>
+      <td class="muted">${dealsForClient.length}</td>
+      <td style="font-weight:700;color:${totalVal>0?'var(--accent)':'var(--text-3)'}">${totalVal > 0 ? fmtVal(totalVal) : '—'}</td>
+      <td>
+        <div style="display:flex;justify-content:flex-end;gap:6px">
+          <button class="btn btn-ghost btn-sm cl-orgchart" data-id="${c.id}" title="Open the contact org chart for this client" style="display:flex;align-items:center;gap:4px">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="5" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="9" y="16" width="6" height="5" rx="1"/><path d="M6.5 8v3h11v-3"/><path d="M12 11v5"/></svg>
+            Org Chart
+            ${(c.contacts || []).length ? `<span style="opacity:0.7;font-weight:600">${(c.contacts || []).length}</span>` : ''}
+          </button>
+          <button class="btn btn-ghost btn-sm cl-edit" data-id="${c.id}">Edit</button>
+          ${isClosed
+            ? `<button class="btn btn-ghost btn-sm cl-reopen" data-id="${c.id}" style="color:var(--accent)">Reopen</button>`
+            : `<button class="btn btn-ghost btn-sm cl-close" data-id="${c.id}" style="color:var(--text-2)">Close</button>`}
+          <button class="btn btn-ghost btn-sm cl-del" data-id="${c.id}" style="color:${dealsForClient.length>0?'var(--text-3)':'var(--danger)'};${dealsForClient.length>0?'cursor:not-allowed;opacity:0.5;':''}">Delete</button>
+        </div>
       </td>
     `;
-    tr.addEventListener('click', e => { if (!e.target.closest('.cl-edit')) showNewClientModal(() => renderView(), client); });
-    tbody.appendChild(tr);
+    // Row click opens edit modal — but ignore clicks on action buttons
+    tr.addEventListener('click', e => {
+      if (e.target.closest('button')) return;
+      showNewClientModal(() => renderView(), c);
+    });
+    body.appendChild(tr);
   });
 
-  tbody.querySelectorAll('.cl-edit').forEach(btn => {
+  // Wire up action buttons
+  body.querySelectorAll('.cl-orgchart').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _orgChartClientId = btn.dataset.id;
+      renderView();
+    });
+  });
+  body.querySelectorAll('.cl-edit, .cl-edit-billing').forEach(btn => {
     btn.addEventListener('click', () => {
       const cl = getClients().find(c => c.id === btn.dataset.id);
       if (cl) showNewClientModal(() => renderView(), cl);
     });
   });
+  body.querySelectorAll('.cl-close').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cl = getClients().find(c => c.id === btn.dataset.id);
+      if (!cl?.id) return;
+      saveClientToTrackr({ ...cl, status: 'closed' });
+      toast(`${cl.name} closed — hidden from new pickers, existing data kept 🔒`);
+      renderView();
+    });
+  });
+  body.querySelectorAll('.cl-reopen').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cl = getClients().find(c => c.id === btn.dataset.id);
+      if (!cl?.id) return;
+      saveClientToTrackr({ ...cl, status: 'active' });
+      toast(`${cl.name} reopened — back in the rotation ✨`);
+      renderView();
+    });
+  });
+  body.querySelectorAll('.cl-del').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      const cl = getClients().find(c => c.id === id);
+      const hasDeals = (DB.deals || []).some(d => d.clientId === id);
+      if (hasDeals) {
+        toast('This client still has deals! Move them first before deleting 🔌', 'error');
+        return;
+      }
+      confirmModal(
+        'Delete client?',
+        `<strong>${cl?.name || 'This client'}</strong> will be permanently removed. This can't be undone.<br><br>If you'd rather keep historical records, use <em>Close</em> instead.`,
+        'Delete',
+        () => {
+          // Remove from TRACKR's mis-v1.clients (the canonical store)
+          try {
+            const raw = localStorage.getItem('mis-v1');
+            const data = raw ? JSON.parse(raw) : {};
+            if (Array.isArray(data.clients)) {
+              data.clients = data.clients.filter(c => c.id !== id);
+              localStorage.setItem('mis-v1', JSON.stringify(data));
+              window.dispatchEvent(new StorageEvent('storage', { key: 'mis-v1', newValue: JSON.stringify(data) }));
+            }
+          } catch(e) {}
+          toast('Client deleted. Goodbye and good luck! 👋');
+          renderView();
+        }
+      );
+    });
+  });
 }
 
+// ════════════════════════════════════════════════════════
+//  ORG CHART
+// ════════════════════════════════════════════════════════
+// Free-form drag-and-drop canvas of contact boxes for one client. Each
+// contact gets an {x, y} position stored on the contact record. The user
+// can drop a contact anywhere — Y axis represents seniority (top = most
+// senior), X axis is for grouping/teams. Reporting lines are drawn
+// between any two contacts with a parent-child relationship (contact.reportsTo).
+//
+// Persistence: contact.position = {x, y} (origin top-left of canvas)
+//              contact.reportsTo = id of another contact (or null for top-level)
+// All saved via saveClientToTrackr (storage event → TRACKR re-renders too).
+
+// In-memory drag state — only valid during a drag operation
+let _ocDrag = null; // { contactId, startX, startY, offsetX, offsetY }
+// Connection-mode state — when set, clicking a box will set its reportsTo
+let _ocConnectFromId = null;
+
+// Default positions for newly-added contacts when they have no saved position
+function _ocDefaultPosition(index) {
+  const cols = 4;
+  return {
+    x: 40 + (index % cols) * 240,
+    y: 40 + Math.floor(index / cols) * 160,
+  };
+}
+
+function renderOrgChart(el, acts, clientId) {
+  const client = getClients().find(c => c.id === clientId);
+  if (!client) {
+    // Client was deleted — drop back to the list
+    _orgChartClientId = null;
+    renderView();
+    return;
+  }
+  const contacts = (client.contacts || []).map((ct, i) => ({
+    ...ct,
+    // Ensure every contact has a position so drawing is deterministic
+    position: ct.position || _ocDefaultPosition(i),
+  }));
+
+  // ── Topbar actions ──
+  acts.innerHTML = '';
+  const backBtn = document.createElement('button');
+  backBtn.className = 'btn btn-ghost btn-sm';
+  backBtn.innerHTML = '← Back to Clients';
+  backBtn.onclick = () => { _orgChartClientId = null; _ocConnectFromId = null; renderView(); };
+  acts.appendChild(backBtn);
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'btn btn-primary btn-sm';
+  addBtn.innerHTML = '+ Add Contact';
+  addBtn.onclick = () => {
+    // New contact spawns near the centre with sensible defaults
+    const newCt = {
+      id: genId('ct'),
+      name: '',
+      jobTitle: '',
+      email: '',
+      phone: '',
+      linkedin: '',
+      isLead: contacts.length === 0,
+      reportsTo: null,
+      position: _ocDefaultPosition(contacts.length),
+    };
+    const updated = { ...client, contacts: [...(client.contacts || []), newCt] };
+    saveClientToTrackr(updated);
+    renderView();
+  };
+  acts.appendChild(addBtn);
+
+  // ── Canvas ──
+  // Use a relatively-positioned container with a fixed minimum size; boxes
+  // are absolutely positioned inside. The SVG overlay renders the connection
+  // lines underneath the boxes (z-index 0 vs 1).
+  const lead = contacts.find(ct => ct.isLead) || null;
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--text-3);margin-bottom:3px">Org Chart</div>
+        <div style="font-size:22px;font-weight:300;color:var(--text)">${(client.name||'').replace(/</g,'&lt;')}</div>
+        ${lead ? `<div style="font-size:12px;color:var(--text-3);margin-top:2px">Lead contact: <strong style="color:var(--text-2);font-weight:600">${(lead.name||'Unnamed').replace(/</g,'&lt;')}</strong>${lead.jobTitle?` · ${lead.jobTitle.replace(/</g,'&lt;')}`:''}</div>` : ''}
+      </div>
+      <div style="font-size:11.5px;color:var(--text-3);max-width:380px;line-height:1.5;text-align:right">
+        Drag boxes to position. Click <strong style="color:var(--text-2)">Connect</strong> on a box, then click another to draw a reporting line. Top = most senior.
+      </div>
+    </div>
+
+    ${contacts.length === 0 ? `
+      <div style="background:#fff;border:1px dashed var(--border);border-radius:8px;padding:80px 24px;text-align:center;color:var(--text-3)">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:14px;opacity:0.6"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/><circle cx="17" cy="5" r="3"/><path d="M21 11v-1a3 3 0 0 0-3-3"/></svg>
+        <div style="font-size:15px;font-weight:600;color:var(--text-2);margin-bottom:6px">No contacts yet</div>
+        <div style="font-size:13px;line-height:1.5">Click <strong style="color:var(--text-2)">+ Add Contact</strong> to drop your first box on the canvas.</div>
+      </div>
+    ` : `
+      <div id="oc-canvas" style="position:relative;background:#fff;border:1px solid var(--border);border-radius:8px;overflow:auto;min-height:600px;height:calc(100vh - 220px)">
+        <div id="oc-canvas-inner" style="position:relative;width:${Math.max(1200, ...contacts.map(c => c.position.x + 240))}px;height:${Math.max(600, ...contacts.map(c => c.position.y + 200))}px">
+          <svg id="oc-lines" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0"></svg>
+          <div id="oc-boxes" style="position:absolute;top:0;left:0;width:100%;height:100%;z-index:1"></div>
+        </div>
+      </div>
+    `}
+  `;
+
+  if (!contacts.length) return;
+
+  // ── Render boxes ──
+  const boxesContainer = el.querySelector('#oc-boxes');
+  contacts.forEach(ct => {
+    const isConnectFrom = _ocConnectFromId === ct.id;
+    const isLeadFlag = !!ct.isLead;
+    const div = document.createElement('div');
+    div.className = 'oc-box';
+    div.dataset.contactId = ct.id;
+    div.style.cssText = `
+      position:absolute;
+      left:${ct.position.x}px; top:${ct.position.y}px;
+      width:220px; min-height:108px;
+      background:#fff;
+      border:${isConnectFrom ? '2px solid var(--accent)' : '1px solid var(--border)'};
+      border-radius:6px;
+      padding:14px 16px 12px;
+      box-shadow:${isConnectFrom ? '0 0 0 4px rgba(103,143,47,0.15)' : '0 1px 2px rgba(0,0,0,0.04)'};
+      cursor:grab;
+      user-select:none;
+      transition:box-shadow .12s, border-color .12s;
+    `;
+    div.innerHTML = `
+      ${isLeadFlag ? `<span class="badge badge-green" style="position:absolute;top:8px;right:8px;font-size:9px;padding:1px 6px">Lead</span>` : ''}
+      <div class="oc-name" style="font-size:14px;font-weight:600;color:var(--text);line-height:1.3;margin-bottom:4px;padding-right:${isLeadFlag?'40px':'0'};word-break:break-word">${(ct.name || 'Unnamed').replace(/</g,'&lt;')}</div>
+      <div class="oc-email" style="font-size:11.5px;color:var(--text-3);line-height:1.4;margin-bottom:6px;word-break:break-all">${(ct.email || '').replace(/</g,'&lt;') || '<span style="opacity:0.5">no email</span>'}</div>
+      <div class="oc-title" style="font-size:11.5px;color:var(--text-2);line-height:1.4;font-style:italic">${(ct.jobTitle || '').replace(/</g,'&lt;') || '<span style="opacity:0.5;font-style:normal">no title</span>'}</div>
+      <div class="oc-actions" style="display:flex;gap:4px;margin-top:9px;border-top:1px solid var(--bg);padding-top:7px;opacity:0.85">
+        <button class="oc-btn oc-edit" data-id="${ct.id}" style="flex:1;font-size:10.5px;font-weight:600;padding:3px 6px;border:1px solid var(--border);background:var(--bg);color:var(--text-2);border-radius:3px;cursor:pointer">Edit</button>
+        <button class="oc-btn oc-connect" data-id="${ct.id}" style="flex:1;font-size:10.5px;font-weight:600;padding:3px 6px;border:1px solid ${isConnectFrom?'var(--accent)':'var(--border)'};background:${isConnectFrom?'var(--accent)':'var(--bg)'};color:${isConnectFrom?'#fff':'var(--text-2)'};border-radius:3px;cursor:pointer" title="${isConnectFrom?'Click another box to set its manager, or click here to cancel':'Mark as the manager, then click a direct report'}">${isConnectFrom?'Cancel':'Connect'}</button>
+        <button class="oc-btn oc-del" data-id="${ct.id}" style="font-size:10.5px;font-weight:600;padding:3px 6px;border:1px solid var(--border);background:var(--bg);color:var(--danger);border-radius:3px;cursor:pointer" title="Delete contact">×</button>
+      </div>
+    `;
+    boxesContainer.appendChild(div);
+  });
+
+  // ── Render reporting lines ──
+  // Draw an L-shaped line from each child to its parent. Ends at the child's
+  // top-centre and starts at the parent's bottom-centre, with a horizontal
+  // shelf in between for clean orthogonal routing.
+  const svg = el.querySelector('#oc-lines');
+  const BOX_W = 220;
+  const BOX_H_DEFAULT = 108; // matches min-height; close enough for rendering
+  let svgInner = '';
+  contacts.forEach(child => {
+    if (!child.reportsTo) return;
+    const parent = contacts.find(p => p.id === child.reportsTo);
+    if (!parent) return;
+    const px = parent.position.x + BOX_W / 2;
+    const py = parent.position.y + BOX_H_DEFAULT;
+    const cx = child.position.x + BOX_W / 2;
+    const cy = child.position.y;
+    // Shelf at the midpoint
+    const midY = (py + cy) / 2;
+    svgInner += `<path d="M ${px} ${py} L ${px} ${midY} L ${cx} ${midY} L ${cx} ${cy}" stroke="var(--border)" stroke-width="1.5" fill="none"/>`;
+  });
+  svg.innerHTML = svgInner;
+
+  // ── Drag wiring ──
+  const canvas = el.querySelector('#oc-canvas');
+  const inner  = el.querySelector('#oc-canvas-inner');
+
+  function onPointerDown(e) {
+    // Only drag from the box itself, not from action buttons or text selection
+    if (e.target.closest('.oc-actions')) return;
+    if (e.target.closest('input, textarea, select')) return;
+    const box = e.target.closest('.oc-box');
+    if (!box) return;
+    e.preventDefault();
+    const id = box.dataset.contactId;
+    const ct = contacts.find(x => x.id === id);
+    if (!ct) return;
+    // Compute offset from the pointer to the top-left of the box, accounting
+    // for canvas scroll position
+    const canvasRect = canvas.getBoundingClientRect();
+    const innerLeft = canvasRect.left - canvas.scrollLeft;
+    const innerTop  = canvasRect.top  - canvas.scrollTop;
+    _ocDrag = {
+      contactId: id,
+      offsetX: e.clientX - (innerLeft + ct.position.x),
+      offsetY: e.clientY - (innerTop  + ct.position.y),
+      box,
+    };
+    box.style.cursor = 'grabbing';
+    box.style.zIndex = '2';
+    box.style.boxShadow = '0 6px 16px rgba(0,0,0,0.12)';
+    document.addEventListener('pointermove', onPointerMove);
+    document.addEventListener('pointerup',   onPointerUp, { once: true });
+  }
+
+  function onPointerMove(e) {
+    if (!_ocDrag) return;
+    const canvasRect = canvas.getBoundingClientRect();
+    const innerLeft = canvasRect.left - canvas.scrollLeft;
+    const innerTop  = canvasRect.top  - canvas.scrollTop;
+    let nx = e.clientX - innerLeft - _ocDrag.offsetX;
+    let ny = e.clientY - innerTop  - _ocDrag.offsetY;
+    // Clamp to non-negative — boxes can't go off the top-left edge
+    if (nx < 0) nx = 0;
+    if (ny < 0) ny = 0;
+    _ocDrag.box.style.left = nx + 'px';
+    _ocDrag.box.style.top  = ny + 'px';
+    // Update the in-memory contact so subsequent line redraws use the new pos
+    const ct = contacts.find(x => x.id === _ocDrag.contactId);
+    if (ct) {
+      ct.position = { x: nx, y: ny };
+      // Live-redraw lines so they follow the box during drag
+      let svgInner = '';
+      contacts.forEach(child => {
+        if (!child.reportsTo) return;
+        const parent = contacts.find(p => p.id === child.reportsTo);
+        if (!parent) return;
+        const px = parent.position.x + BOX_W / 2;
+        const py = parent.position.y + BOX_H_DEFAULT;
+        const cx = child.position.x + BOX_W / 2;
+        const cy = child.position.y;
+        const midY = (py + cy) / 2;
+        svgInner += `<path d="M ${px} ${py} L ${px} ${midY} L ${cx} ${midY} L ${cx} ${cy}" stroke="var(--border)" stroke-width="1.5" fill="none"/>`;
+      });
+      svg.innerHTML = svgInner;
+    }
+  }
+
+  function onPointerUp(e) {
+    if (!_ocDrag) return;
+    document.removeEventListener('pointermove', onPointerMove);
+    const ct = contacts.find(x => x.id === _ocDrag.contactId);
+    _ocDrag.box.style.cursor = 'grab';
+    _ocDrag.box.style.zIndex = '1';
+    _ocDrag.box.style.boxShadow = '0 1px 2px rgba(0,0,0,0.04)';
+    _ocDrag = null;
+    if (!ct) return;
+    // Persist the new position back to the client record
+    const updated = {
+      ...client,
+      contacts: client.contacts.map(c => c.id === ct.id ? { ...c, position: ct.position } : c),
+    };
+    saveClientToTrackr(updated);
+    // No re-render — DOM and DB are now in sync; saves us a flash + scroll-loss
+  }
+
+  // Click handlers — Edit / Connect / Delete + box-click for connect-target
+  inner.addEventListener('click', e => {
+    const editBtn    = e.target.closest('.oc-edit');
+    const connectBtn = e.target.closest('.oc-connect');
+    const delBtn     = e.target.closest('.oc-del');
+    const box        = e.target.closest('.oc-box');
+
+    if (editBtn) {
+      e.stopPropagation();
+      showContactEditModal(client.id, editBtn.dataset.id);
+      return;
+    }
+    if (connectBtn) {
+      e.stopPropagation();
+      const id = connectBtn.dataset.id;
+      if (_ocConnectFromId === id) {
+        // Cancel
+        _ocConnectFromId = null;
+        renderView();
+        return;
+      }
+      if (_ocConnectFromId) {
+        // Already a "from" — but user clicked Connect on another box.
+        // Treat the new one as the new "from" (re-arming).
+        _ocConnectFromId = id;
+        renderView();
+        return;
+      }
+      _ocConnectFromId = id;
+      renderView();
+      return;
+    }
+    if (delBtn) {
+      e.stopPropagation();
+      const ct = contacts.find(x => x.id === delBtn.dataset.id);
+      if (!ct) return;
+      const name = ct.name || 'this contact';
+      confirmModal(
+        'Delete contact?',
+        `Remove <strong>${name.replace(/</g,'&lt;')}</strong> from the org chart? Any reporting lines pointing to or from them will be cleared.`,
+        'Delete',
+        () => {
+          const newContacts = (client.contacts || [])
+            .filter(c => c.id !== ct.id)
+            // Clear reportsTo on anyone who reported to the deleted contact
+            .map(c => c.reportsTo === ct.id ? { ...c, reportsTo: null } : c);
+          saveClientToTrackr({ ...client, contacts: newContacts });
+          if (_ocConnectFromId === ct.id) _ocConnectFromId = null;
+          renderView();
+        }
+      );
+      return;
+    }
+
+    // Plain box click while a "from" is armed → set this box as the report
+    if (box && _ocConnectFromId && _ocConnectFromId !== box.dataset.contactId) {
+      const reportId = box.dataset.contactId;
+      const managerId = _ocConnectFromId;
+      // Prevent cycles — walk up from manager and refuse if we hit the report
+      let cursor = managerId;
+      const visited = new Set();
+      while (cursor && !visited.has(cursor)) {
+        if (cursor === reportId) {
+          toast('That would create a reporting cycle.', 'error');
+          _ocConnectFromId = null;
+          renderView();
+          return;
+        }
+        visited.add(cursor);
+        const next = (client.contacts || []).find(c => c.id === cursor);
+        cursor = next?.reportsTo || null;
+      }
+      const newContacts = (client.contacts || []).map(c =>
+        c.id === reportId ? { ...c, reportsTo: managerId } : c
+      );
+      saveClientToTrackr({ ...client, contacts: newContacts });
+      _ocConnectFromId = null;
+      const fromName = (client.contacts || []).find(c => c.id === managerId)?.name || 'Manager';
+      const toName   = (client.contacts || []).find(c => c.id === reportId)?.name || 'Report';
+      toast(`${toName} now reports to ${fromName}`, 'success');
+      renderView();
+    }
+  });
+
+  // Pointerdown on boxes for drag
+  inner.querySelectorAll('.oc-box').forEach(b => {
+    b.addEventListener('pointerdown', onPointerDown);
+  });
+}
+
+// Inline edit modal for a single contact — used from the org chart's Edit button.
+// Doesn't reload the chart unless the save changes something visible.
+function showContactEditModal(clientId, contactId) {
+  const client = getClients().find(c => c.id === clientId);
+  if (!client) return;
+  const contact = (client.contacts || []).find(c => c.id === contactId);
+  if (!contact) return;
+  const o = showModal('Edit Contact', `
+    <div class="form-row">
+      <div class="form-group full">
+        <label>Name</label>
+        <input id="oc-ct-name" value="${(contact.name||'').replace(/"/g,'&quot;')}" placeholder="Full name">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Email</label>
+        <input id="oc-ct-email" type="email" value="${(contact.email||'').replace(/"/g,'&quot;')}" placeholder="email@company.com">
+      </div>
+      <div class="form-group">
+        <label>Job Title</label>
+        <input id="oc-ct-title" value="${(contact.jobTitle||'').replace(/"/g,'&quot;')}" placeholder="e.g. Head of Delivery">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Phone</label>
+        <input id="oc-ct-phone" value="${(contact.phone||'').replace(/"/g,'&quot;')}" placeholder="+1 555 0100">
+      </div>
+      <div class="form-group">
+        <label>LinkedIn</label>
+        <input id="oc-ct-linkedin" value="${(contact.linkedin||'').replace(/"/g,'&quot;')}" placeholder="https://linkedin.com/in/…">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group full">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="oc-ct-lead" ${contact.isLead?'checked':''} style="width:auto">
+          <span>Mark as Lead Contact</span>
+        </label>
+        <div class="form-hint">The lead is the primary day-to-day contact for this client.</div>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      <button class="btn btn-primary" id="oc-ct-save">Save</button>
+    </div>
+  `, '560px');
+
+  o.querySelector('#oc-ct-save').onclick = () => {
+    const name = o.querySelector('#oc-ct-name').value.trim();
+    if (!name) { toast('Name required', 'error'); return; }
+    const updates = {
+      name,
+      email:    o.querySelector('#oc-ct-email').value.trim(),
+      jobTitle: o.querySelector('#oc-ct-title').value.trim(),
+      phone:    o.querySelector('#oc-ct-phone').value.trim(),
+      linkedin: o.querySelector('#oc-ct-linkedin').value.trim(),
+      isLead:   o.querySelector('#oc-ct-lead').checked,
+    };
+    // If we're setting this one as Lead, clear the flag on every other contact
+    const newContacts = (client.contacts || []).map(c => {
+      if (c.id === contactId) return { ...c, ...updates };
+      if (updates.isLead) return { ...c, isLead: false };
+      return c;
+    });
+    saveClientToTrackr({ ...client, contacts: newContacts });
+    o.remove();
+    renderView();
+    toast('Contact updated ✓', 'success');
+  };
+}
+
+// Unified Client Modal — mirrors TRACKR's showClientModal so editing a client
+// looks the same regardless of which app you're in. Both apps read/write the
+// same record in localStorage['mis-v1'].clients.
+//
+// Sections that Trackr owns (rate card per job title, logo upload to Supabase)
+// are shown READ-ONLY here with a "Manage in TRACKR" link, since Grow doesn't
+// know the job titles list and isn't wired to Supabase storage. Saves preserve
+// any field Grow doesn't manage by spreading the existing record.
 function showNewClientModal(onSave, existing) {
   const isEdit = !!existing;
   const c = existing || {};
-  // Work on a deep copy of contacts so edits only commit on save
+  // Work on a deep copy of contacts so cancel discards changes
   let contacts = JSON.parse(JSON.stringify(c.contacts || []));
 
+  // ── Contacts UI ──
   function contactsHTML() {
     return `
-      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px" id="nc-contacts-list">
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px" id="cm-contacts-list">
         ${contacts.length === 0
-          ? `<div style="font-size:14px;color:#ADADAB;padding:10px 0">No contacts yet.</div>`
+          ? `<div style="font-size:13px;color:#ADADAB;padding:8px 0">No contacts yet.</div>`
           : contacts.map((ct, i) => `
             <div style="background:#FAFAF9;border:1px solid #E2E2E2;border-radius:5px;padding:11px 13px;position:relative" data-ci="${i}">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
                 <div style="display:flex;align-items:center;gap:8px">
                   ${ct.isLead
                     ? `<span class="badge badge-green" style="font-size:10px">Lead</span>`
-                    : `<button class="btn btn-ghost btn-sm nc-set-lead" data-ci="${i}" style="font-size:10px;padding:2px 8px;color:#898987">Set as Lead</button>`}
-                  <span style="font-size:13px;font-weight:700">${ct.name||'Unnamed'}</span>
-                  ${ct.jobTitle ? `<span style="font-size:11px;color:#898987">${ct.jobTitle}</span>` : ''}
+                    : `<button class="btn btn-ghost btn-sm cm-set-lead" data-ci="${i}" style="font-size:10px;padding:2px 8px;color:#898987">Set as Lead</button>`}
+                  <span style="font-size:13px;font-weight:700">${(ct.name||'Unnamed').replace(/</g,'&lt;')}</span>
+                  ${ct.jobTitle ? `<span style="font-size:11px;color:#898987">${ct.jobTitle.replace(/</g,'&lt;')}</span>` : ''}
                 </div>
-                <button class="nc-del-contact btn btn-ghost btn-sm" data-ci="${i}" style="color:#C0392B;padding:3px 8px;font-size:13px">×</button>
+                <button class="cm-del-contact btn btn-ghost btn-sm" data-ci="${i}" style="color:#C0392B;padding:3px 8px;font-size:13px">×</button>
               </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 14px">
-                <input class="nc-ct-name" data-ci="${i}" value="${ct.name||''}" placeholder="Full Name" class="input-sm">
-                <input class="nc-ct-title" data-ci="${i}" value="${ct.jobTitle||''}" placeholder="Job Title" class="input-sm">
-                <input class="nc-ct-email" data-ci="${i}" type="email" value="${ct.email||''}" placeholder="email@company.com" class="input-sm">
-                <input class="nc-ct-phone" data-ci="${i}" value="${ct.phone||''}" placeholder="Phone" class="input-sm">
-                <input class="nc-ct-linkedin" data-ci="${i}" value="${ct.linkedin||''}" placeholder="LinkedIn URL" style="font-size:14px;padding:6px 9px;border:1px solid #E2E2E2;border-radius:3px;font-family:inherit;grid-column:1/-1">
+                <input class="cm-ct-name"  data-ci="${i}" value="${(ct.name||'').replace(/"/g,'&quot;')}" placeholder="Full Name" class="input-sm">
+                <input class="cm-ct-title" data-ci="${i}" value="${(ct.jobTitle||'').replace(/"/g,'&quot;')}" placeholder="Job Title" class="input-sm">
+                <input class="cm-ct-email" data-ci="${i}" type="email" value="${(ct.email||'').replace(/"/g,'&quot;')}" placeholder="email@company.com" class="input-sm">
+                <input class="cm-ct-phone" data-ci="${i}" value="${(ct.phone||'').replace(/"/g,'&quot;')}" placeholder="Phone" class="input-sm">
+                <input class="cm-ct-linkedin" data-ci="${i}" value="${(ct.linkedin||'').replace(/"/g,'&quot;')}" placeholder="LinkedIn URL" style="font-size:14px;padding:6px 9px;border:1px solid #E2E2E2;border-radius:3px;font-family:inherit;grid-column:1/-1">
               </div>
             </div>`).join('')}
       </div>
-      <button class="btn btn-ghost btn-sm" id="nc-add-contact" style="margin-bottom:4px">+ Add Contact</button>
+      <button class="btn btn-ghost btn-sm" id="cm-add-contact">+ Add Contact</button>
     `;
   }
 
@@ -2209,39 +3261,38 @@ function showNewClientModal(onSave, existing) {
     o.querySelectorAll('[data-ci]').forEach(inp => {
       const i = parseInt(inp.dataset.ci);
       if (!contacts[i]) return;
-      if (inp.classList.contains('nc-ct-name'))     contacts[i].name     = inp.value.trim();
-      if (inp.classList.contains('nc-ct-title'))    contacts[i].jobTitle = inp.value.trim();
-      if (inp.classList.contains('nc-ct-email'))    contacts[i].email    = inp.value.trim();
-      if (inp.classList.contains('nc-ct-phone'))    contacts[i].phone    = inp.value.trim();
-      if (inp.classList.contains('nc-ct-linkedin')) contacts[i].linkedin = inp.value.trim();
+      if (inp.classList.contains('cm-ct-name'))     contacts[i].name     = inp.value.trim();
+      if (inp.classList.contains('cm-ct-title'))    contacts[i].jobTitle = inp.value.trim();
+      if (inp.classList.contains('cm-ct-email'))    contacts[i].email    = inp.value.trim();
+      if (inp.classList.contains('cm-ct-phone'))    contacts[i].phone    = inp.value.trim();
+      if (inp.classList.contains('cm-ct-linkedin')) contacts[i].linkedin = inp.value.trim();
     });
   }
 
   function rewireContacts() {
     syncContactsFromForm();
-    o.querySelector('#nc-contacts-wrap').innerHTML = contactsHTML();
+    o.querySelector('#cm-contacts-wrap').innerHTML = contactsHTML();
     bindContactEvents();
   }
 
   function bindContactEvents() {
-    o.querySelector('#nc-add-contact')?.addEventListener('click', () => {
+    o.querySelector('#cm-add-contact')?.addEventListener('click', () => {
       syncContactsFromForm();
       const isFirst = contacts.length === 0;
       contacts.push({ id: genId('ct'), name:'', jobTitle:'', email:'', phone:'', linkedin:'', isLead: isFirst });
       rewireContacts();
     });
-    o.querySelectorAll('.nc-del-contact').forEach(btn => {
+    o.querySelectorAll('.cm-del-contact').forEach(btn => {
       btn.addEventListener('click', () => {
         syncContactsFromForm();
         const i = parseInt(btn.dataset.ci);
         const wasLead = contacts[i]?.isLead;
         contacts.splice(i, 1);
-        // Reassign lead to first if deleted lead
         if (wasLead && contacts.length > 0) contacts[0].isLead = true;
         rewireContacts();
       });
     });
-    o.querySelectorAll('.nc-set-lead').forEach(btn => {
+    o.querySelectorAll('.cm-set-lead').forEach(btn => {
       btn.addEventListener('click', () => {
         syncContactsFromForm();
         const i = parseInt(btn.dataset.ci);
@@ -2251,49 +3302,158 @@ function showNewClientModal(onSave, existing) {
     });
   }
 
-  const o = showModal(isEdit ? `${c.name}` : 'New Client', `
-    <div class="section-divider">Company</div>
+  // Read-only billing summary — what TRACKR has set on this record. We can't
+  // edit job-title rate cards from Grow (we don't know the job titles list),
+  // but we CAN show what's been configured so the user knows it exists.
+  const billingModel = c.billingModel || 'standard';
+  const rateCardCount = c.rateCard ? Object.keys(c.rateCard).length : 0;
+  const billingSummary = !isEdit
+    ? '<span style="color:#ADADAB">Configured in TRACKR after the client is created.</span>'
+    : (billingModel === 'rate_card'
+        ? `<span class="badge badge-green" style="margin-right:6px">Rate Card</span><span style="color:#898987">${rateCardCount} job-title override${rateCardCount===1?'':'s'} configured</span>`
+        : '<span class="badge badge-gray" style="margin-right:6px">Standard</span><span style="color:#898987">Per-member rates apply</span>');
+
+  const o = showModal(isEdit ? 'Edit Client' : 'New Client', `
+    <!-- ─── Identity ─── -->
     <div class="form-row">
-      <div class="form-group"><label>Name</label><input id="nc-name" value="${c.name||''}" placeholder="e.g. Acme Corp" style="font-size:13px"></div>
-      <div class="form-group">
-        <label>Classification</label>
-        <select id="nc-class">
-          <option value="client" ${(c.classification||'client')==='client'?'selected':''}>Client</option>
-          <option value="prospect" ${c.classification==='prospect'?'selected':''}>Prospect</option>
-        </select>
+      <div class="form-group full">
+        <label>Client Name</label>
+        <input id="cm-name" value="${(c.name||'').replace(/"/g,'&quot;')}" placeholder="e.g. Acme Corp">
       </div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label>General Email</label><input type="email" id="nc-email" value="${c.email||''}" placeholder="info@company.com"></div>
-      <div class="form-group"><label>General Phone</label><input id="nc-phone" value="${c.phone||''}" placeholder="+1 555 0100"></div>
+      <div class="form-group">
+        <label>Classification</label>
+        <select id="cm-classification">
+          <option value="client" ${(c.classification||'client')==='client'?'selected':''}>Client</option>
+          <option value="prospect" ${c.classification==='prospect'?'selected':''}>Prospect</option>
+        </select>
+        <div class="form-hint">Prospects only appear in Grow. Clients appear everywhere.</div>
+      </div>
+      <div class="form-group">
+        <label>Status</label>
+        <select id="cm-status">
+          <option value="active" ${(c.status||'active')==='active'?'selected':''}>Active</option>
+          <option value="closed" ${c.status==='closed'?'selected':''}>Closed</option>
+        </select>
+        <div class="form-hint">Closed clients are hidden from new pickers. Existing data stays intact.</div>
+      </div>
+    </div>
+
+    <!-- ─── General contact ─── -->
+    <div class="form-row">
+      <div class="form-group">
+        <label>General Email</label>
+        <input type="email" id="cm-email" value="${(c.email||'').replace(/"/g,'&quot;')}" placeholder="info@company.com">
+      </div>
+      <div class="form-group">
+        <label>General Phone</label>
+        <input id="cm-phone" value="${(c.phone||'').replace(/"/g,'&quot;')}" placeholder="+1 555 0100">
+      </div>
     </div>
     <div class="form-row">
-      <div class="form-group full"><label>Notes</label><textarea id="nc-notes">${c.notes||''}</textarea></div>
+      <div class="form-group full">
+        <label>Notes</label>
+        <textarea id="cm-notes" rows="3" placeholder="Anything worth remembering about this client.">${(c.notes||'').replace(/</g,'&lt;')}</textarea>
+      </div>
     </div>
-    <div class="section-divider">Contacts</div>
-    <div id="nc-contacts-wrap">${contactsHTML()}</div>
+
+    <!-- ─── Billing (read-only here) ─── -->
+    <div class="section-divider">Billing</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Default Currency</label>
+        <select id="cm-currency">
+          ${getCurrencies().map(cu=>`<option value="${cu}" ${cu===(c.currency||DB.settings.currency||'USD')?'selected':''}>${cu}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Billing Model</label>
+        <div style="padding:8px 10px;background:#FAFAF9;border:1px solid #E2E2E2;border-radius:3px;font-size:13px;line-height:1.4">${billingSummary}</div>
+        <div class="form-hint">Edit billing model and rate card in TRACKR → Projects & Clients.</div>
+      </div>
+    </div>
+
+    <!-- ─── Contacts ─── -->
+    <div class="section-divider" style="display:flex;align-items:center;justify-content:space-between">
+      <span>Contacts</span>
+      ${isEdit ? `<button type="button" class="btn btn-ghost btn-sm" id="cm-open-orgchart" style="font-size:11px;font-weight:600;letter-spacing:0;text-transform:none">Open org chart →</button>` : ''}
+    </div>
+    <div id="cm-contacts-wrap">${contactsHTML()}</div>
+
+    <!-- ─── Branding (read-only here) ─── -->
+    <div class="section-divider">Branding</div>
+    <div class="form-row">
+      <div class="form-group full">
+        <label>Logo</label>
+        <div style="display:flex;align-items:center;gap:14px;margin-top:6px">
+          <div style="width:72px;height:48px;border:1px solid #E2E2E2;border-radius:3px;background:#FAFAF9;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
+            ${c.logo ? `<img src="${c.logo}" style="max-width:100%;max-height:100%;object-fit:contain">` : `<svg viewBox="0 0 24 24" fill="none" stroke="#ADADAB" stroke-width="1.5" width="22" height="22"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`}
+          </div>
+          <div style="font-size:13px;color:#898987;line-height:1.5">
+            ${c.logo ? 'Logo uploaded.' : 'No logo set.'}<br>
+            <span style="font-size:11.5px;color:#ADADAB">Upload or change in TRACKR — used in report exports.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="form-actions">
       <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
-      <button class="btn btn-primary" id="nc-save">${isEdit ? 'Update' : 'Add Client'}</button>
+      <button class="btn btn-primary" id="cm-save">${isEdit ? 'Update' : 'Add Client'}</button>
     </div>
-  `, '640px');
+  `, '680px');
 
   bindContactEvents();
 
-  o.querySelector('#nc-save').onclick = () => {
+  // "Open org chart →" — close the modal and drill into the org chart view.
+  // Save pending changes first so the chart shows the latest contacts.
+  o.querySelector('#cm-open-orgchart')?.addEventListener('click', () => {
     syncContactsFromForm();
-    const name = o.querySelector('#nc-name').value.trim();
+    const name = o.querySelector('#cm-name').value.trim();
+    if (name && c.id) {
+      const updated = {
+        ...(c || {}),
+        id:   c.id,
+        name,
+        classification: o.querySelector('#cm-classification').value,
+        status:         o.querySelector('#cm-status').value,
+        currency:       o.querySelector('#cm-currency').value,
+        email:          o.querySelector('#cm-email').value.trim(),
+        phone:          o.querySelector('#cm-phone').value.trim(),
+        notes:          o.querySelector('#cm-notes').value.trim(),
+        contacts:       contacts.filter(ct => ct.name),
+        billingModel:   c.billingModel || 'standard',
+        rateCard:       c.rateCard || {},
+        logo:           c.logo || '',
+        createdAt:      c.createdAt || new Date().toISOString().slice(0,10),
+      };
+      saveClientToTrackr(updated);
+    }
+    o.remove();
+    _orgChartClientId = c.id;
+    if (currentView !== 'clients') navigate('clients');
+    else renderView();
+  });
+
+  o.querySelector('#cm-save').onclick = () => {
+    syncContactsFromForm();
+    const name = o.querySelector('#cm-name').value.trim();
     if (!name) { toast('Name required', 'error'); return; }
+    // Spread existing record first, then overwrite Grow-managed fields. This
+    // preserves rateCard, billingModel, logo, etc. that TRACKR set.
     const client = {
       ...(c || {}),
       id:             c.id || genId('cl'),
       name,
-      classification: o.querySelector('#nc-class').value,
-      email:          o.querySelector('#nc-email').value.trim(),
-      phone:          o.querySelector('#nc-phone').value.trim(),
-      notes:          o.querySelector('#nc-notes').value.trim(),
+      classification: o.querySelector('#cm-classification').value,
+      status:         o.querySelector('#cm-status').value,
+      currency:       o.querySelector('#cm-currency').value,
+      email:          o.querySelector('#cm-email').value.trim(),
+      phone:          o.querySelector('#cm-phone').value.trim(),
+      notes:          o.querySelector('#cm-notes').value.trim(),
       contacts:       contacts.filter(ct => ct.name),
-      currency:       c.currency || DB.settings.currency || 'USD',
+      // Defaults so a brand-new record is well-formed
       billingModel:   c.billingModel || 'standard',
       rateCard:       c.rateCard || {},
       logo:           c.logo || '',
@@ -2438,7 +3598,28 @@ function renderPipelineSettings(el) {
     // Keep fixed cols
     const fixed = DB.columns.filter(c => c.fixed).map((c,i) => ({ ...c, order: newCols.length + i }));
     DB.columns = [...newCols, ...fixed];
-    saveDB(); renderView(); toast('Columns saved ✓');
+    saveDB();
+    // Sweep mis-v1.projects to update any cached pipelineStageName values that
+    // point at columns we just renamed, so TRACKR rendering stays in sync.
+    try {
+      const raw = localStorage.getItem('mis-v1');
+      if (raw) {
+        const mis = JSON.parse(raw);
+        let touched = false;
+        const colNameById = Object.fromEntries(DB.columns.map(c => [c.id, c.name]));
+        (mis.projects || []).forEach(p => {
+          if (p.pipelineStageId && colNameById[p.pipelineStageId] && p.pipelineStageName !== colNameById[p.pipelineStageId]) {
+            p.pipelineStageName = colNameById[p.pipelineStageId];
+            touched = true;
+          }
+        });
+        if (touched) {
+          localStorage.setItem('mis-v1', JSON.stringify(mis));
+          window.dispatchEvent(new StorageEvent('storage', { key: 'mis-v1', newValue: JSON.stringify(mis) }));
+        }
+      }
+    } catch(_) {}
+    renderView(); toast('Columns saved ✓');
   });
 
   wireColSettings(el);
@@ -2461,7 +3642,57 @@ function wireColSettings(el) {
 }
 
 // ── Boot ──────────────────────────────────────────────
+// ── DESIGN SYNC — reads mis-v1 design config and applies to GROW ──
+// Mirrors PAY's applyDesignFromTrackr — keeps the three apps visually in lockstep
+// when design tokens are edited in TRACKR's Settings → Design System page.
+function applyDesignFromTrackr(){
+  try{
+    const raw=localStorage.getItem('mis-v1');
+    if(!raw)return;
+    const d=(JSON.parse(raw).design)||{};
+    const accent=d.accent||'#678F2F';
+    const sidebar=d.sidebar||'#2F2F2F';
+    const hexToRgb=h=>{const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16);return r+','+g+','+b;};
+    const shadeColor=(hex,p)=>{const n=parseInt(hex.replace('#',''),16);const r=Math.min(255,Math.max(0,(n>>16)+p));const g=Math.min(255,Math.max(0,((n>>8)&0xFF)+p));const b=Math.min(255,Math.max(0,(n&0xFF)+p));return'#'+((1<<24)|(r<<16)|(g<<8)|b).toString(16).slice(1);};
+    const vars={
+      '--accent':accent,
+      '--accent-dim':'rgba('+hexToRgb(accent)+',.10)',
+      '--accent-hover':d.accentHover||shadeColor(accent,-15),
+      '--bg':d.bg||'#F2F1EE',
+      '--card':d.card||'#FFFFFF',
+      '--sidebar-bg':sidebar,
+      '--text':d.text||'#2F2F2F',
+      '--border':d.border||'#E2E2E2',
+      '--danger':d.danger||'#C0392B',
+      '--danger-dim':'rgba('+hexToRgb(d.danger||'#C0392B')+',.08)',
+      '--info':d.info||'#4A7FC1',
+      '--sidebar-active':'rgba('+hexToRgb(accent)+',.18)',
+      '--header-h':d.headerH||'64px',
+      '--sidebar-w':d.sidebarW||'256px',
+      '--radius':d.radius||'6px',
+      '--radius-sm':d.radiusSm||'3px',
+      '--radius-lg':d.radiusLg||'8px',
+      '--font':"'"+(d.font||'Manrope')+"',sans-serif",
+    };
+    const root=document.documentElement;
+    Object.entries(vars).forEach(([k,v])=>root.style.setProperty(k,v));
+    // Apply custom font if needed
+    if(d.font&&d.font!=='Manrope'&&!document.querySelector('link[data-growfont]')){
+      const lnk=document.createElement('link');
+      lnk.rel='stylesheet';lnk.dataset.growfont='1';
+      lnk.href='https://fonts.googleapis.com/css2?family='+encodeURIComponent(d.font)+':wght@300;400;500;600;700;800&display=swap';
+      document.head.appendChild(lnk);
+    }
+    // Apply custom logo if set
+    if(d.logoSvg){
+      const svgEl=document.querySelector('.sidebar-logo svg');
+      if(svgEl){svgEl.parentElement.innerHTML='<img src="'+d.logoSvg+'" style="max-height:64px;display:block;max-width:100%">';}
+    }
+  }catch(e){}
+}
+
 loadDB();
+applyDesignFromTrackr();
 // Sync team members from TRACKR's mis-v1 on every boot
 function getTrackrTeam() {
   try {
@@ -2520,156 +3751,722 @@ function renderCSMUser() {
   });
 }
 
-// Migration: seed Closed Won column with any TRACKR clients that don't have a CSM deal yet
-// First: purge old client-seeded Won deals (no csmProjectId, no reverse project link)
-(function purgeClientSeededWonDeals() {
-  const wonCol = DB.columns.find(c => c.won);
-  if (!wonCol) return;
-  const projects = getTrackrProjects();
-  const projectDealIds = new Set(projects.map(p => p.csmDealId).filter(Boolean));
-  const before = DB.deals.length;
-  DB.deals = DB.deals.filter(d => {
-    if (d.stage !== wonCol.id) return true;          // not in Won — keep
-    if (d.csmProjectId) return true;                 // has forward project link — keep
-    if (projectDealIds.has(d.id)) return true;       // has reverse project link — keep
-    return false;                                     // client-seeded legacy deal — remove
-  });
-  if (DB.deals.length !== before) saveDB();
-})();
-// Remove any duplicate Won deals sharing the same csmProjectId (race condition cleanup)
-(function deduplicateWonDeals() {
-  const wonCol = DB.columns.find(c => c.won);
-  if (!wonCol) return;
-  const seenProjId  = new Set();
-  const seenNameKey = new Set();
-  const before = DB.deals.length;
-  DB.deals = DB.deals.filter(d => {
-    if (d.stage !== wonCol.id) return true; // not in Won — keep
-    // Deduplicate by csmProjectId (primary key)
-    if (d.csmProjectId) {
-      if (seenProjId.has(d.csmProjectId)) return false;
-      seenProjId.add(d.csmProjectId);
-    }
-    // Deduplicate by projectName+clientId fallback (for legacy deals without csmProjectId)
-    const nameKey = (d.projectName||d.name||'') + '|' + (d.clientId||'');
-    if (nameKey !== '|') {
-      if (seenNameKey.has(nameKey)) return false;
-      seenNameKey.add(nameKey);
-    }
-    return true;
-  });
-  if (DB.deals.length !== before) saveDB();
-})();
+// (Obsolete cleanup IIFEs removed — under the unified schema, deals and
+// projects share the same record so there's no possibility of duplicate
+// Won-column entries or stale client-seeded deals.)
 
 document.querySelectorAll('.nav-item').forEach(n => {
   n.addEventListener('click', () => navigate(n.dataset.view));
 });
 
-// Cross-tab sync: when TRACKR writes to mis-v1, re-render views that use client/project data
-window.addEventListener('storage', e => {
-  if (e.key !== 'mis-v1') return;
-  const projects = getTrackrProjects();
-  let changed = false;
+// ════════════════════════════════════════════════════════
+//  ASK & ACT — per-page AI assistant (admin only)
+// ════════════════════════════════════════════════════════
+// Mirrors TRACKR's Ask & Act drawer adapted for Grow's pipeline data.
+// Uses the same Anthropic API key stored in TRACKR (mis-v1.settings.anthropicApiKey)
+// and the same per-view chat history mechanism (DB.pageChatHistory[viewName]).
+const PAGE_CHAT_SUPPORTED = ['pipeline', 'introducers'];
+let _pageChatOpen = false;
+let _pageChatBusy = false;
 
-  // Seed new projects and sync name/value changes on existing ones
-  const wonCol = DB.columns.find(c => c.won);
-  if (wonCol) {
-    projects.forEach(proj => {
-      // Find existing deal linked to this project
-      const existingDeal = DB.deals.find(d =>
-        d.csmProjectId === proj.id || proj.csmDealId === d.id
-      );
+// ── Tools the AI can call from the Grow Ask & Act drawer ────────
+const GROW_TOOLS = [
+  {
+    name: 'get_pipeline_summary',
+    description: 'Get a high-level summary of the pipeline: total deals, total weighted value (deals × probability), value by stage, count by stage, and top deals by value. Use to answer "what does the pipeline look like" or "what\'s our weighted pipeline".',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_deals',
+    description: 'List deals with filtering options. Returns id, name, client, stage, value, currency, probability, billing type, days in stage, introducer. Use to find specific deals or scan a stage.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        stage:        { type: 'string', description: 'Filter by stage id or stage name (case-insensitive)' },
+        bucket:       { type: 'string', enum: ['pipeline','won','lost'], description: 'Filter by bucket: pipeline (in-flight), won (Closed Won), lost (Closed Lost)' },
+        client_id:    { type: 'string', description: 'Filter by client id' },
+        min_value:    { type: 'number', description: 'Only deals worth at least this' },
+        introducer_id:{ type: 'string', description: 'Filter to deals with this introducer' },
+        limit:        { type: 'number', description: 'Max deals to return (default 50, max 200)' },
+      },
+    },
+  },
+  {
+    name: 'get_deal_details',
+    description: 'Get full info about one deal including the linked TRACKR project (billing type, contracted value, hours logged, invoices). Use when the user asks about a specific deal.',
+    input_schema: {
+      type: 'object',
+      properties: { deal_id: { type: 'string' } },
+      required: ['deal_id'],
+    },
+  },
+  {
+    name: 'get_introducer_summary',
+    description: 'Get all introducers with their deal count, total commission earned (won deals), total commission pending (pipeline × probability), and per-deal breakdown. Use for "who are our top introducers" or "how much commission do we owe X".',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_stale_deals',
+    description: 'Find deals that haven\'t been updated in N days. Returns deals sorted by oldest first. Useful for "what deals need follow-up" or "what\'s stuck in the pipeline".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        days_since_update: { type: 'number', description: 'Threshold in days (default 14)' },
+      },
+    },
+  },
+  {
+    name: 'update_deal_notes',
+    description: 'Append a note to a deal\'s notes field. Existing notes are preserved with a timestamp prefix. Use when the user wants to record an outcome from a call/email.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        deal_id: { type: 'string' },
+        note:    { type: 'string', description: 'Text to append. Will be prepended with today\'s date.' },
+      },
+      required: ['deal_id', 'note'],
+    },
+  },
+  {
+    name: 'set_introducer_commission',
+    description: 'Update the commission percentage for the introducer on a specific deal. Confirm with the user before calling — this changes financial data.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        deal_id:        { type: 'string' },
+        commission_pct: { type: 'number', description: 'New commission percentage (0–100)' },
+      },
+      required: ['deal_id', 'commission_pct'],
+    },
+  },
+];
 
-      if (existingDeal) {
-        // Sync fields that may have been updated in TRACKR
-        let dealChanged = false;
-        if (proj.name && existingDeal.projectName !== proj.name) {
-          existingDeal.projectName = proj.name;
-          existingDeal.name        = proj.name;
-          dealChanged = true;
-        }
-        if (proj.clientId && existingDeal.clientId !== proj.clientId) {
-          existingDeal.clientId = proj.clientId;
-          dealChanged = true;
-        }
-        if (existingDeal.csmProjectId !== proj.id) {
-          existingDeal.csmProjectId = proj.id;
-          dealChanged = true;
-        }
-        if (dealChanged) changed = true;
-      } else {
-        // New project — seed a Won deal for it
-        DB.deals.push({
-          id:           genId('deal'),
-          csmProjectId: proj.id,
-          clientId:     proj.clientId || null,
-          projectName:  proj.name,
-          name:         proj.name,
-          value:        proj.fixedFee || proj.retainer?.monthlyFee || 0,
-          currency:     proj.currency || DB.settings.currency || 'USD',
-          stage:        wonCol.id,
-          teamLead:     proj.leadId || null,
-          techLead:     null,
-          notes:        '',
-          createdAt:    proj.startDate || new Date().toISOString().slice(0,10),
-          wonAt:        proj.startDate || new Date().toISOString().slice(0,10),
+// ── Tool execution ──────────────────────────────────────
+function executeGrowTool(name, input) {
+  try {
+    if (name === 'get_pipeline_summary') {
+      const wonStage  = (DB.columns || []).find(c => c.won);
+      const lostStage = (DB.columns || []).find(c => c.lost);
+      const cols = (DB.columns || []).slice().sort((a,b) => (a.order||0) - (b.order||0));
+      // Stage→probability weighting (matches getGrowPipelineDeals in TRACKR)
+      const weight = {};
+      cols.forEach(c => {
+        if (c.won)  return weight[c.id] = 1.0;
+        if (c.lost) return weight[c.id] = 0;
+        const custom = cols.filter(x => !x.won && !x.lost);
+        const pos = custom.findIndex(x => x.id === c.id);
+        weight[c.id] = custom.length > 1 ? (pos / (custom.length-1)) * 0.7 + 0.1 : 0.5;
+      });
+      const byStage = {};
+      let totalPipelineValue = 0, totalWeighted = 0, wonValue = 0, lostValue = 0;
+      const pipelineDealCount = (DB.deals || []).filter(d => d.stage !== wonStage?.id && d.stage !== lostStage?.id).length;
+      (DB.deals || []).forEach(d => {
+        const v = resolveDealValue(d).value || 0;
+        const col = cols.find(c => c.id === d.stage);
+        const stageName = col?.name || d.stage || 'Unstaged';
+        if (!byStage[stageName]) byStage[stageName] = { count:0, value:0, weighted:0 };
+        byStage[stageName].count++;
+        byStage[stageName].value += v;
+        byStage[stageName].weighted += v * (weight[d.stage] || 0);
+        if (d.stage === wonStage?.id)       wonValue += v;
+        else if (d.stage === lostStage?.id) lostValue += v;
+        else { totalPipelineValue += v; totalWeighted += v * (weight[d.stage] || 0); }
+      });
+      const topDeals = (DB.deals || [])
+        .filter(d => d.stage !== wonStage?.id && d.stage !== lostStage?.id)
+        .map(d => ({ id: d.id, name: getDealName(d), value: resolveDealValue(d).value || 0, stage: cols.find(c => c.id === d.stage)?.name || d.stage }))
+        .sort((a,b) => b.value - a.value)
+        .slice(0, 10);
+      return { success: true, data: {
+        total_deal_count:    (DB.deals || []).length,
+        pipeline_deal_count: pipelineDealCount,
+        won_value:           Math.round(wonValue),
+        lost_value:          Math.round(lostValue),
+        pipeline_value:      Math.round(totalPipelineValue),
+        weighted_pipeline:   Math.round(totalWeighted),
+        currency:            DB.settings?.currency || 'USD',
+        by_stage:            byStage,
+        top_pipeline_deals:  topDeals,
+      }};
+    }
+
+    if (name === 'get_deals') {
+      const wonStage  = (DB.columns || []).find(c => c.won);
+      const lostStage = (DB.columns || []).find(c => c.lost);
+      const cols = DB.columns || [];
+      let deals = (DB.deals || []);
+      if (input.bucket === 'won')      deals = deals.filter(d => d.stage === wonStage?.id);
+      else if (input.bucket === 'lost') deals = deals.filter(d => d.stage === lostStage?.id);
+      else if (input.bucket === 'pipeline') deals = deals.filter(d => d.stage !== wonStage?.id && d.stage !== lostStage?.id);
+      if (input.stage) {
+        const s = String(input.stage).toLowerCase();
+        deals = deals.filter(d => {
+          const col = cols.find(c => c.id === d.stage);
+          return d.stage === input.stage || (col?.name || '').toLowerCase() === s;
         });
-        changed = true;
       }
-    });
+      if (input.client_id)     deals = deals.filter(d => d.clientId === input.client_id);
+      if (input.introducer_id) deals = deals.filter(d => d.introducerId === input.introducer_id);
+      if (typeof input.min_value === 'number') {
+        deals = deals.filter(d => (resolveDealValue(d).value || 0) >= input.min_value);
+      }
+      const limit = Math.min(Math.max(1, input.limit || 50), 200);
+      const total = deals.length;
+      deals = deals.slice(0, limit);
+      const today = new Date();
+      return { success: true, data: {
+        total_matching: total,
+        returned: deals.length,
+        deals: deals.map(d => {
+          const col = cols.find(c => c.id === d.stage);
+          const cli = getClients().find(c => c.id === d.clientId);
+          const intr = (DB.introducers || []).find(r => r.id === d.introducerId);
+          const v = resolveDealValue(d);
+          // Days since createdAt as a rough "in pipeline" proxy
+          const created = d.createdAt ? new Date(d.createdAt + 'T00:00:00') : null;
+          const daysSince = created ? Math.floor((today - created) / 86400000) : null;
+          return {
+            id: d.id,
+            name: getDealName(d) || '(unnamed)',
+            client_id: d.clientId || null,
+            client_name: cli?.name || null,
+            stage_id: d.stage,
+            stage_name: col?.name || d.stage,
+            stage_type: col?.won ? 'won' : col?.lost ? 'lost' : 'pipeline',
+            value: v.value,
+            currency: v.currency,
+            value_label: v.label || null,
+            billing_type: d.billingType || null,
+            days_in_pipeline: daysSince,
+            won_at: d.wonAt || null,
+            introducer_id: d.introducerId || null,
+            introducer_name: intr?.name || null,
+            introducer_commission_pct: d.introduction?.commission || 0,
+          };
+        }),
+      }};
+    }
+
+    if (name === 'get_deal_details') {
+      const d = (DB.deals || []).find(x => x.id === input.deal_id);
+      if (!d) return { error: `Deal not found: ${input.deal_id}` };
+      const cli = getClients().find(c => c.id === d.clientId);
+      const col = (DB.columns || []).find(c => c.id === d.stage);
+      const intr = (DB.introducers || []).find(r => r.id === d.introducerId);
+      const proj = getTrackrProjectForDeal(d.id);
+      let totalHours = 0, hoursCount = 0, invoiceCount = 0, invoiceTotal = 0, paidTotal = 0;
+      try {
+        const mis = JSON.parse(localStorage.getItem('mis-v1') || '{}');
+        (mis.timeEntries || []).forEach(e => {
+          if (e.projectId === d.id) { hoursCount++; totalHours += parseFloat(e.hours) || 0; }
+        });
+        (mis.invoices || []).forEach(i => {
+          if (i.projectId !== d.id) return;
+          invoiceCount++;
+          invoiceTotal += parseFloat(i.amount) || 0;
+          if (i.paymentDate || i.status === 'paid') paidTotal += parseFloat(i.amount) || 0;
+        });
+      } catch(_) {}
+      const v = resolveDealValue(d);
+      return { success: true, data: {
+        id: d.id,
+        name: getDealName(d) || '(unnamed)',
+        client: cli ? { id: cli.id, name: cli.name } : null,
+        stage: col?.name || d.stage,
+        stage_type: col?.won ? 'won' : col?.lost ? 'lost' : 'pipeline',
+        value: v.value, currency: v.currency, value_label: v.label || null,
+        billing_type: d.billingType || null,
+        contracted: proj ? {
+          fixed_fee: proj.fixedFee || 0,
+          retainer_monthly: proj.retainer?.monthlyFee || 0,
+          retainer_hours_included: proj.retainer?.hoursIncluded || 0,
+          variable_retainer_yearly: proj.variableRetainer?.yearlyBudget || 0,
+          variable_retainer_rate: proj.variableRetainer?.hourlyRate || 0,
+          change_orders_count: (proj.changeOrders || []).length,
+        } : null,
+        introducer: intr ? {
+          id: intr.id, name: intr.name, company: intr.company || null,
+          commission_pct: d.introduction?.commission || 0,
+        } : null,
+        notes: d.notes || '',
+        start_date: d.startDate || null,
+        end_date: d.endDate || null,
+        created_at: d.createdAt || null,
+        won_at: d.wonAt || null,
+        time_entries_count: hoursCount,
+        total_hours: Math.round(totalHours * 10) / 10,
+        invoice_count: invoiceCount,
+        invoice_total: invoiceTotal,
+        invoice_paid: paidTotal,
+      }};
+    }
+
+    if (name === 'get_introducer_summary') {
+      const wonStage  = (DB.columns || []).find(c => c.won);
+      const lostStage = (DB.columns || []).find(c => c.lost);
+      const result = (DB.introducers || []).map(intr => {
+        const intrDeals = (DB.deals || []).filter(d => d.introducerId === intr.id);
+        let wonComm = 0, pendingComm = 0;
+        const breakdown = intrDeals.map(d => {
+          const v = resolveDealValue(d).value || 0;
+          const pct = d.introduction?.commission || 0;
+          const isWon = d.stage === wonStage?.id;
+          const isLost = d.stage === lostStage?.id;
+          const comm = isLost ? 0 : v * (pct / 100);
+          if (isWon)       wonComm += comm;
+          else if (!isLost) pendingComm += comm;
+          return {
+            deal_id: d.id, deal_name: getDealName(d) || '(unnamed)',
+            stage: (DB.columns || []).find(c => c.id === d.stage)?.name || d.stage,
+            value: v, commission_pct: pct, commission_amount: Math.round(comm),
+          };
+        });
+        return {
+          id: intr.id, name: intr.name, company: intr.company || null,
+          email: intr.email || null,
+          deal_count: intrDeals.length,
+          won_commission_total: Math.round(wonComm),
+          pending_commission_total: Math.round(pendingComm),
+          deals: breakdown,
+        };
+      }).sort((a,b) => b.won_commission_total - a.won_commission_total);
+      return { success: true, data: {
+        introducer_count: result.length,
+        introducers: result,
+      }};
+    }
+
+    if (name === 'get_stale_deals') {
+      const threshold = input.days_since_update || 14;
+      const wonStage  = (DB.columns || []).find(c => c.won);
+      const lostStage = (DB.columns || []).find(c => c.lost);
+      const today = new Date();
+      const stale = (DB.deals || [])
+        .filter(d => d.stage !== wonStage?.id && d.stage !== lostStage?.id)
+        .map(d => {
+          // Use createdAt as proxy for last-modified; deals don't track updatedAt yet
+          const created = d.createdAt ? new Date(d.createdAt + 'T00:00:00') : null;
+          const days = created ? Math.floor((today - created) / 86400000) : null;
+          return { d, days };
+        })
+        .filter(x => x.days !== null && x.days >= threshold)
+        .sort((a,b) => b.days - a.days);
+      return { success: true, data: {
+        threshold_days: threshold,
+        count: stale.length,
+        deals: stale.slice(0, 30).map(({ d, days }) => {
+          const cli = getClients().find(c => c.id === d.clientId);
+          const col = (DB.columns || []).find(c => c.id === d.stage);
+          return {
+            id: d.id, name: getDealName(d) || '(unnamed)',
+            client_name: cli?.name || null,
+            stage: col?.name || d.stage,
+            value: resolveDealValue(d).value,
+            days_since_created: days,
+          };
+        }),
+      }};
+    }
+
+    if (name === 'update_deal_notes') {
+      const d = (DB.deals || []).find(x => x.id === input.deal_id);
+      if (!d) return { error: `Deal not found: ${input.deal_id}` };
+      const note = String(input.note || '').trim();
+      if (!note) return { error: 'Note text is required' };
+      const today = new Date().toISOString().slice(0,10);
+      const stamped = `[${today}] ${note}`;
+      const updated = { ...d, notes: d.notes ? `${d.notes}\n\n${stamped}` : stamped };
+      dealCommit(updated);
+      saveDB();
+      // Re-derive deals from the persisted store so the verified block reflects
+      // what's actually saved, not the in-flight payload.
+      syncDealsFromProjects();
+      const verified = (DB.deals || []).find(x => x.id === d.id);
+      return {
+        success: true,
+        message: `Added note to "${getDealName(d) || d.id}"`,
+        verified: { deal_id: verified?.id, notes_length: (verified?.notes || '').length, last_note_includes: stamped },
+      };
+    }
+
+    if (name === 'set_introducer_commission') {
+      const d = (DB.deals || []).find(x => x.id === input.deal_id);
+      if (!d) return { error: `Deal not found: ${input.deal_id}` };
+      if (!d.introducerId) return { error: 'This deal has no introducer — assign one first via the deal modal' };
+      const pct = Number(input.commission_pct);
+      if (!isFinite(pct) || pct < 0 || pct > 100) return { error: 'commission_pct must be a number between 0 and 100' };
+      const updated = { ...d, introduction: { ...(d.introduction || {}), commission: pct } };
+      dealCommit(updated);
+      saveDB();
+      syncDealsFromProjects();
+      const verified = (DB.deals || []).find(x => x.id === d.id);
+      return {
+        success: true,
+        message: `Set introducer commission on "${getDealName(d) || d.id}" to ${pct}%`,
+        verified: { deal_id: verified?.id, commission_pct: verified?.introduction?.commission ?? null, introducer_id: verified?.introducerId || null },
+      };
+    }
+
+    return { error: `Unknown tool: ${name}` };
+  } catch(e) {
+    return { error: `Tool ${name} threw: ${e?.message || String(e)}` };
+  }
+}
+
+// ── System prompt — view-specific context ───────────────
+function buildGrowChatSystemPrompt(viewName) {
+  const today = new Date().toISOString().slice(0,10);
+  const dc = DB.settings?.currency || 'USD';
+  const wonStage  = (DB.columns || []).find(c => c.won);
+  const lostStage = (DB.columns || []).find(c => c.lost);
+  const cols = (DB.columns || []).slice().sort((a,b) => (a.order||0) - (b.order||0));
+  const stageList = cols.map(c => `${c.id} (${c.name}${c.won?', WON':c.lost?', LOST':''})`).join(', ');
+
+  const COMMON = `You are an AI assistant inside the Grow CRM app for mis.studio. Today is ${today}. Default currency is ${dc}.
+
+You have read + limited write access to the pipeline. Mutating tools (update_deal_notes, set_introducer_commission) should be PROPOSED first — explain what you'll do and wait for the user to confirm in the chat before invoking them. Read tools (get_*) you can call freely without confirmation.
+
+Pipeline stages in this workspace: ${stageList}.
+
+Style:
+- Be concise. Use short bullets or numbered lists.
+- When summarising, lead with the headline number; details on follow-up.
+- Format currency naturally ($50k, £2.4M); for clarity use full numbers in tables.
+- Don't list every deal unless asked — give counts + top entries.
+
+`;
+
+  if (viewName === 'pipeline') {
+    const total  = (DB.deals || []).length;
+    const won    = (DB.deals || []).filter(d => d.stage === wonStage?.id).length;
+    const lost   = (DB.deals || []).filter(d => d.stage === lostStage?.id).length;
+    const live   = total - won - lost;
+    return COMMON + `You're on the PIPELINE page — kanban view of all deals across the stages above.
+
+**Quick stats:** ${total} deals total — ${live} in pipeline, ${won} won, ${lost} lost.
+
+**Useful tools here:** get_pipeline_summary, get_deals (filter by stage/bucket/client/introducer), get_deal_details, get_stale_deals, update_deal_notes, set_introducer_commission.
+
+**Common asks:**
+- "What's our weighted pipeline?" → get_pipeline_summary
+- "What deals are stuck?" → get_stale_deals
+- "Tell me about the Acme deal" → get_deals to find it, then get_deal_details
+- "Add a note to that deal: had a great call, sending proposal Friday" → update_deal_notes (confirm first)
+- "Bump the commission on X to 12%" → set_introducer_commission (confirm first)`;
   }
 
-  if (changed) saveDB();
-  if (['clients', 'pipeline', 'health'].includes(currentView)) renderView();
+  if (viewName === 'introducers') {
+    const introducerCount = (DB.introducers || []).length;
+    return COMMON + `You're on the INTRODUCERS page — referral partners and the deals they've brought in.
+
+**Workspace has ${introducerCount} introducer${introducerCount===1?'':'s'}.**
+
+**Useful tools here:** get_introducer_summary (full breakdown), get_deals with introducer_id filter, set_introducer_commission, get_deal_details.
+
+**Common asks:**
+- "Who are our top introducers?" → get_introducer_summary
+- "How much commission do we owe James Wong?" → get_introducer_summary
+- "What deals did Acme Partners bring in?" → get_deals with their introducer_id`;
+  }
+
+  return COMMON + `You're in Grow. Use the tools to answer questions about pipeline data.`;
+}
+
+// ── Drawer UI ──────────────────────────────────────────
+function renderPageChatPanel(viewName) {
+  let panel = document.getElementById('page-chat-panel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'page-chat-panel';
+    panel.style.cssText = `
+      position:fixed;top:0;right:0;bottom:0;width:440px;max-width:92vw;
+      background:#fff;border-left:1px solid var(--border);
+      box-shadow:-12px 0 32px rgba(0,0,0,0.06);
+      display:flex;flex-direction:column;z-index:9000;
+      transform:translateX(100%);transition:transform 0.25s ease;
+      font-family:var(--font);
+    `;
+    document.body.appendChild(panel);
+    requestAnimationFrame(() => { panel.style.transform = 'translateX(0)'; });
+  }
+  const titleMap = { pipeline: 'Pipeline', introducers: 'Introducers' };
+  const pageTitle = titleMap[viewName] || viewName;
+  panel.innerHTML = `
+    <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg);flex-shrink:0">
+      <div>
+        <div style="font-size:11px;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px">Ask &amp; Act</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-top:2px">${pageTitle}</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" id="page-chat-clear" title="Clear conversation for this page">Clear</button>
+        <button class="btn btn-ghost btn-sm" id="page-chat-close" title="Close" style="font-size:18px;padding:0 10px">×</button>
+      </div>
+    </div>
+    <div id="page-chat-list" style="flex:1;overflow-y:auto;padding:12px 14px"></div>
+    <div style="padding:10px 12px;border-top:1px solid var(--border);background:var(--bg);flex-shrink:0">
+      <div style="display:flex;gap:8px;align-items:flex-end">
+        <textarea id="page-chat-input" placeholder="Ask about this page or instruct an action…" rows="2" style="flex:1;resize:none;border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:inherit;font-size:13px;line-height:1.45;outline:none;min-height:38px;max-height:120px;background:#fff"></textarea>
+        <button class="btn btn-primary" id="page-chat-send" style="height:38px;padding:0 14px;flex-shrink:0">Send</button>
+      </div>
+      <div style="margin-top:6px;font-size:10.5px;color:var(--text-3);line-height:1.4">⏎ to send · Shift+⏎ for new line · Tools: ${GROW_TOOLS.length} available</div>
+    </div>
+  `;
+  renderPageChatHistory(viewName);
+  panel.querySelector('#page-chat-close').onclick = () => closePageChat();
+  panel.querySelector('#page-chat-clear').onclick = () => {
+    if (!confirm('Clear the conversation for this page?')) return;
+    if (DB.pageChatHistory) DB.pageChatHistory[viewName] = [];
+    saveDB();
+    renderPageChatHistory(viewName);
+  };
+  const input = panel.querySelector('#page-chat-input');
+  const send  = panel.querySelector('#page-chat-send');
+  const submit = () => {
+    const t = input.value.trim();
+    if (!t || _pageChatBusy) return;
+    input.value = '';
+    runPageChatTurn(viewName, t);
+  };
+  send.onclick = submit;
+  input.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } };
+  setTimeout(() => input.focus(), 100);
+}
+
+function openPageChat(viewName) {
+  _pageChatOpen = true;
+  renderPageChatPanel(viewName);
+  const btn = document.getElementById('page-chat-btn');
+  if (btn) btn.style.background = 'var(--border)';
+}
+
+function closePageChat() {
+  _pageChatOpen = false;
+  const panel = document.getElementById('page-chat-panel');
+  if (panel) {
+    panel.style.transform = 'translateX(100%)';
+    setTimeout(() => panel.remove(), 250);
+  }
+  const btn = document.getElementById('page-chat-btn');
+  if (btn) btn.style.background = 'var(--bg)';
+}
+
+function updatePageChatButton() {
+  const btn = document.getElementById('page-chat-btn');
+  if (!btn) return;
+  // Read role from TRACKR session — Grow doesn't have its own role system
+  let isAdmin = false;
+  try {
+    const sess = JSON.parse(sessionStorage.getItem('mis-session-v1') || localStorage.getItem('mis-session-v1') || 'null');
+    if (sess?.memberId) {
+      const trackrDB = JSON.parse(localStorage.getItem('mis-v1') || '{}');
+      const member = (trackrDB.teamMembers || []).find(m => m.id === sess.memberId);
+      isAdmin = member?.role === 'admin';
+    }
+  } catch(_) {}
+  const supported = PAGE_CHAT_SUPPORTED.includes(currentView);
+  if (isAdmin && supported) {
+    btn.style.display = 'flex';
+    btn.onclick = () => {
+      if (_pageChatOpen) closePageChat();
+      else openPageChat(currentView);
+    };
+  } else {
+    btn.style.display = 'none';
+    if (_pageChatOpen) closePageChat();
+  }
+  if (_pageChatOpen && supported) renderPageChatPanel(currentView);
+}
+
+function renderPageChatHistory(viewName) {
+  const list = document.getElementById('page-chat-list');
+  if (!list) return;
+  if (!DB.pageChatHistory) DB.pageChatHistory = {};
+  const chat = DB.pageChatHistory[viewName] || [];
+  const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const renderInline = txt => {
+    let s = esc(txt);
+    s = s.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<em>$1</em>');
+    return s;
+  };
+  const renderText = text => (text||'').split('\n').map(line => {
+    const t = line.trim();
+    if (!t) return '<div style="height:6px"></div>';
+    const numMatch = t.match(/^(\d+)\.\s+(.*)$/);
+    if (numMatch) return `<div style="display:flex;gap:8px;padding:2px 0"><span style="font-weight:700;color:var(--text-3);min-width:16px">${numMatch[1]}.</span><span>${renderInline(numMatch[2])}</span></div>`;
+    const bulletMatch = t.match(/^[-•*]\s+(.*)$/);
+    if (bulletMatch) return `<div style="display:flex;gap:8px;padding:2px 0"><span style="color:var(--text-3);font-weight:700">•</span><span>${renderInline(bulletMatch[1])}</span></div>`;
+    return `<div style="margin:3px 0">${renderInline(t)}</div>`;
+  }).join('');
+
+  if (!chat.length) {
+    const placeholders = {
+      pipeline: 'Try: "What\'s our weighted pipeline?" or "Find deals stuck for over 30 days" or "Tell me about the Acme deal"',
+      introducers: 'Try: "Who are our top introducers?" or "How much commission is pending for James?"',
+    };
+    list.innerHTML = `<div style="padding:24px;color:var(--text-3);font-size:13px;line-height:1.6;text-align:center">
+      <div style="font-size:14px;font-weight:600;color:var(--text-2);margin-bottom:8px">Ask &amp; Act on this page</div>
+      <div style="font-size:12.5px">${placeholders[viewName] || 'Ask anything about this page.'}</div>
+      <div style="font-size:11px;color:var(--text-3);margin-top:14px;line-height:1.5">For mutations the AI will <strong>propose first</strong> and wait for your confirmation. Read-only questions get answered immediately.</div>
+    </div>`;
+    return;
+  }
+
+  list.innerHTML = chat.map(m => {
+    const when = new Date(m.ts).toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+    if (m.role === 'user') {
+      return `<div style="display:flex;justify-content:flex-end;margin:8px 0">
+        <div style="max-width:85%;padding:8px 12px;background:var(--accent);color:#fff;border-radius:12px 12px 2px 12px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-wrap:break-word">${esc(m.content)}</div>
+      </div>`;
+    }
+    const actionsHTML = (m.actionsTaken && m.actionsTaken.length) ? `
+      <div style="margin-top:8px;padding:7px 9px;background:var(--bg);border-radius:6px;border:1px dashed var(--border);font-size:11px">
+        <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:var(--text-3);margin-bottom:4px">Tool activity</div>
+        ${m.actionsTaken.map(a => {
+          const ok = !a.result?.error;
+          const isRead = (a.tool || '').startsWith('get_');
+          const icon = !ok ? '⚠' : isRead ? '🔍' : '✓';
+          let label;
+          if (a.result?.message) label = a.result.message;
+          else if (a.result?.error) label = a.result.error;
+          else label = a.tool;
+          const colour = !ok ? 'var(--danger)' : isRead ? 'var(--text-3)' : 'var(--accent)';
+          return `<div style="display:flex;gap:5px;align-items:flex-start;color:${colour};margin:1px 0"><span>${icon}</span><span style="color:var(--text-2)">${esc(label)}</span></div>`;
+        }).join('')}
+      </div>` : '';
+    return `<div style="display:flex;justify-content:flex-start;margin:8px 0">
+      <div style="max-width:90%;padding:9px 12px;background:#fff;border:1px solid var(--border);border-radius:12px 12px 12px 2px;font-size:13px;line-height:1.5;color:var(--text)">${renderText(m.content)}${actionsHTML}<div style="margin-top:5px;font-size:10px;color:var(--text-3)">${when}</div></div>
+    </div>`;
+  }).join('');
+  list.scrollTop = list.scrollHeight;
+}
+
+function setPageChatBusyUI(busy) {
+  const send = document.getElementById('page-chat-send');
+  const input = document.getElementById('page-chat-input');
+  if (send)  { send.disabled = busy; send.innerHTML = busy ? '<span style="opacity:.7">Working…</span>' : 'Send'; }
+  if (input) { input.disabled = busy; }
+}
+
+// ── Turn machinery ─────────────────────────────────────
+async function runPageChatTurn(viewName, userText) {
+  // API key is shared from TRACKR's settings (we already share mis-v1)
+  let apiKey = '';
+  try {
+    const trackrDB = JSON.parse(localStorage.getItem('mis-v1') || '{}');
+    apiKey = trackrDB?.settings?.anthropicApiKey || localStorage.getItem('mis-anthropic-key') || '';
+  } catch(_) {}
+  if (!apiKey) {
+    toast('Set your Anthropic API key in TRACKR → Settings → AI Features first', 'error');
+    return;
+  }
+  if (!userText.trim() || _pageChatBusy) return;
+  _pageChatBusy = true;
+  if (!DB.pageChatHistory) DB.pageChatHistory = {};
+  if (!Array.isArray(DB.pageChatHistory[viewName])) DB.pageChatHistory[viewName] = [];
+
+  DB.pageChatHistory[viewName].push({ id: 'msg_'+Date.now(), role: 'user', content: userText.trim(), ts: Date.now() });
+  saveDB();
+  renderPageChatHistory(viewName);
+  setPageChatBusyUI(true);
+
+  let model = 'claude-sonnet-4-6';
+  try {
+    const trackrDB = JSON.parse(localStorage.getItem('mis-v1') || '{}');
+    if (trackrDB?.settings?.aiModel) model = trackrDB.settings.aiModel;
+  } catch(_) {}
+
+  const systemPrompt = buildGrowChatSystemPrompt(viewName);
+  const messages = DB.pageChatHistory[viewName]
+    .filter(m => m.role === 'user' || m.role === 'assistant')
+    .map(m => ({ role: m.role, content: m.content }));
+  const messagesForApi = [...messages];
+  const actionsTaken = [];
+  let finalText = '', lastError = '';
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 90000);
+
+  try {
+    for (let round = 0; round < 6; round++) {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify({ model, max_tokens: 1500, system: systemPrompt, tools: GROW_TOOLS, messages: messagesForApi }),
+        signal: controller.signal,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { lastError = data?.error?.message || `HTTP ${res.status}`; break; }
+      messagesForApi.push({ role: 'assistant', content: data.content });
+      const toolUses = (data.content || []).filter(b => b.type === 'tool_use');
+      if (!toolUses.length) {
+        finalText = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+        break;
+      }
+      const toolResults = [];
+      for (const tu of toolUses) {
+        const result = executeGrowTool(tu.name, tu.input || {});
+        actionsTaken.push({ tool: tu.name, input: tu.input || {}, result });
+        toolResults.push({
+          type: 'tool_result', tool_use_id: tu.id,
+          content: JSON.stringify(result), is_error: !!result.error,
+        });
+      }
+      messagesForApi.push({ role: 'user', content: toolResults });
+    }
+  } catch(e) {
+    lastError = e.name === 'AbortError' ? 'Request timed out after 90s' : (e.message || String(e));
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  if (!finalText) finalText = lastError ? `❌ ${lastError}` : 'No response from AI.';
+
+  DB.pageChatHistory[viewName].push({ id: 'msg_'+Date.now(), role: 'assistant', content: finalText, ts: Date.now(), actionsTaken });
+  if (DB.pageChatHistory[viewName].length > 50) {
+    DB.pageChatHistory[viewName] = DB.pageChatHistory[viewName].slice(-50);
+  }
+  saveDB();
+  _pageChatBusy = false;
+  setPageChatBusyUI(false);
+  renderPageChatHistory(viewName);
+  // If a mutating tool ran, refresh the underlying view
+  if (actionsTaken.some(a => !a.tool.startsWith('get_'))) {
+    syncDealsFromProjects();
+    if (!_pageChatOpen || currentView !== viewName) return;
+    renderView(); // refresh underlying page; drawer survives because it's appended to body
+  }
+}
+
+// Cross-tab sync: when TRACKR writes to mis-v1, re-render views that use client/project data
+// Pending flag for storage-event re-renders. dealCommit fires synchronous
+// storage events that would otherwise destroy DOM mid-event-handler (breaking
+// focus chains). Coalesce rapid events into a single deferred render.
+let _storageRenderPending = false;
+window.addEventListener('storage', e => {
+  if (e.key !== 'mis-v1') return;
+  // Re-apply design tokens immediately — cross-app visual lockstep with TRACKR/PAY
+  applyDesignFromTrackr();
+  // Refresh the derived deals view from the unified store synchronously so
+  // any read between now and the next render hits up-to-date data.
+  syncDealsFromProjects();
+  // Defer the re-render so the current event handler finishes (and DOM stays
+  // alive long enough for click-to-next-field, focus chains, etc.).
+  if (_storageRenderPending) return;
+  _storageRenderPending = true;
+  setTimeout(() => {
+    _storageRenderPending = false;
+    if (['clients', 'pipeline', 'health', 'introducers'].includes(currentView)
+        && !document.querySelector('.modal-overlay')) renderView();
+  }, 0);
 });
 
 // Boot: pull from Supabase if configured, then render
 (async () => {
   const pulled = await growSupaPull();
-  // Always seed/cleanup after boot — whether we pulled from Supabase or not.
-  // Running seed only inside `if (pulled)` caused duplicates: sync boot seeds first,
-  // then pull overwrites DB.deals with older cloud data, then purgeAndSeed seeds again.
-  {
-    (function purgeAndSeed() {
-      const wonCol = DB.columns?.find(c => c.won);
-      if (!wonCol) return;
-      const projects = getTrackrProjects();
-      const projectDealIds = new Set(projects.map(p => p.csmDealId).filter(Boolean));
-      const before = DB.deals.length;
-      // Remove legacy client-seeded Won deals with no project link
-      DB.deals = DB.deals.filter(d => {
-        if (d.stage !== wonCol.id) return true;
-        if (d.csmProjectId) return true;
-        if (projectDealIds.has(d.id)) return true;
-        return false;
-      });
-      let changed = DB.deals.length !== before;
-      projects.forEach(proj => {
-        const existingDeal = DB.deals.find(d => d.csmProjectId === proj.id || proj.csmDealId === d.id);
-        if (existingDeal) {
-          // Sync name/client from TRACKR in case they were updated there
-          if (proj.name && existingDeal.projectName !== proj.name) {
-            existingDeal.projectName = proj.name;
-            existingDeal.name        = proj.name;
-            changed = true;
-          }
-          if (proj.clientId && existingDeal.clientId !== proj.clientId) {
-            existingDeal.clientId = proj.clientId;
-            changed = true;
-          }
-          if (existingDeal.csmProjectId !== proj.id) {
-            existingDeal.csmProjectId = proj.id;
-            changed = true;
-          }
-        } else {
-          // New project — seed a Won deal
-          DB.deals.push({ id:genId('deal'), csmProjectId:proj.id, clientId:proj.clientId||null, projectName:proj.name, name:proj.name, value:proj.fixedFee||proj.retainer?.monthlyFee||0, currency:proj.currency||DB.settings.currency||'USD', stage:wonCol.id, teamLead:proj.leadId||null, techLead:null, notes:'', createdAt:proj.startDate||new Date().toISOString().slice(0,10), wonAt:proj.startDate||new Date().toISOString().slice(0,10) });
-          changed = true;
-        }
-      });
-      if (changed) saveDB();
-    })();
-  } // end seed block
+  // If the pull brought fresh data from another device, design tokens may have changed too —
+  // re-apply so a colour edit on another machine immediately re-skins grow without a refresh.
+  if (pulled) applyDesignFromTrackr();
+  // Refresh derived deals view from the unified mis-v1.projects store
+  syncDealsFromProjects();
   renderCSMUser();
 
   (function checkGrowAccess() {

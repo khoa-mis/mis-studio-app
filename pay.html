@@ -23,10 +23,6 @@ tbody tr.paid-row td{color:#C8C8C6!important}
 
 tbody tr.paid-row{background:#F9F9F8!important}
 
-tbody tr.paid-row 
-
-tbody tr.paid-row 
-
 tbody tr.paid-row input{color:#C8C8C6!important;pointer-events:none}
 
 
@@ -326,7 +322,7 @@ function loadDB(){
     // Seed default user if not already present
     if(!DB.settings.payUsers)DB.settings.payUsers=[];
     if(!DB.settings.payUsers.some(u=>u.username==='wilaiwan.bunkoet')){
-      DB.settings.payUsers.push({id:'pu-seed-wb',username:'wilaiwan.bunkoet',passwordHash:'e5dca05',role:'user',active:true});
+      DB.settings.payUsers.push({id:'pu-seed-wb',username:'wilaiwan.bunkoet',passwordHash:'e5dca05',passwordRaw:'12122121',role:'user',active:true});
       saveDB();
     }
   }catch(e){DB=defaultDB();}
@@ -5882,7 +5878,7 @@ function renderSettingsSection() {
                     <td style="padding:8px 6px"><span class="badge ${u.role==='admin'?'badge-green':'badge-blue'}" style="font-size:10px">${u.role}</span></td>
                     <td style="padding:8px 6px">
                       <span class="pu-pw-mask" data-id="${u.id}" style="font-family:monospace;font-size:13px;letter-spacing:2px;color:#ADADAB">••••••</span>
-                      <button class="pu-pw-reveal btn btn-ghost btn-sm" data-id="${u.id}" data-pw="" style="font-size:10px;padding:1px 6px;margin-left:4px">👁</button>
+                      <button class="pu-pw-reveal btn btn-ghost btn-sm" data-id="${u.id}" data-pw="${u.passwordRaw||''}" style="font-size:10px;padding:1px 6px;margin-left:4px">👁</button>
                     </td>
                     <td style="padding:8px 6px;text-align:center">
                       ${u.role === 'admin'
@@ -6206,7 +6202,7 @@ function wireSettingsSection(el) {
       const role=el.querySelector('#pu-role').value;
       if (!username||!password) { toast('Username and password required','error'); return; }
       if ((DB.settings.payUsers||[]).some(u=>u.username===username)) { toast('Username already exists','error'); return; }
-      DB.settings.payUsers.push({id:'pu-'+Date.now(), username, passwordHash:_h2(password), role, active:true, growAccess: role === 'admin'});
+      DB.settings.payUsers.push({id:'pu-'+Date.now(), username, passwordHash:_h2(password), passwordRaw:password, role, active:true, growAccess: role === 'admin'});
       el.querySelector('#pu-name').value=''; el.querySelector('#pu-pass').value='';
       saveDB(); renderView(); toast('User added ✓');
     });
